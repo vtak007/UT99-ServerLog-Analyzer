@@ -1,0 +1,16 @@
+# Runtime state and logs (regenerated each run) - not source.
+_system/State/*
+_system/Runlogs/*
+!_system/State/.gitkeep
+!_system/Runlogs/.gitkeep
+
+# WinSCP session logs may reference server details.
+*.xml
+
+# Secrets / local config (defense in depth; none are committed).
+*.ini
+
+# OS / editor cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
