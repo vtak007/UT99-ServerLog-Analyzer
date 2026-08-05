@@ -24,10 +24,35 @@ See `CLAUDE.md` for project-specific details.
 
 ## RULED-OUT THEORIES
 
-- (none recorded yet)
+- **Client-brought cosmetic `Failed to load` packages are NOT server problems — do not deploy
+  them.** `ELD_TauntPack002` (a `Voice=`/VoicePack taunt pack, `ELD_DNF1` = DNF taunts) and the
+  custom skins (`CommandoSkins.goth*Blake`, `SGirlSkins.goth*Aryss`, `tskmskins.MekS`, etc.) come
+  from individual players' login URLs. The server logs "Can't find file for package" because it
+  tries to replicate the client's cosmetic content, doesn't have it, and falls back to a default.
+  Purely cosmetic, zero gameplay impact. Deploying to `ServerPackages` would force ALL clients to
+  download one player's taunt/skin pack and adds ACE-validation surface — not worth it. Disposition
+  for these signatures in a report: **confirm benign, no action.** (Decided 2026-08-05 for the
+  08-04 report; ELD was NEW that run, tied to player CHUPAMELA.)
 
 ## PROJECT CONVENTIONS
 
+- **IG+ build is bleeding-edge, NOT stale — do not "update to the stable release."** The server
+  runs `InstaGibPlus_next-netcode-ef237853` (commit `ef237853`, 2026-07-28) from rxut's fork's
+  `next-netcode` branch (`github.com/rxut/InstaGibPlus`). This dev line is **~238 commits AHEAD**
+  of the last stable release (IG+ 11, Feb 2025 on `utspect/InstaGibPlus` master) — "updating" to
+  stable would be an ~18-month netcode downgrade. As of the 08-04 log the only newer dev commit
+  was `1ae891fc` (same day, a jitter-bounding config flag) — irrelevant to the report's warnings.
+  So the IG+ `Accessed None` findings (#3 `bbPlayer.Died` Weapon, #6 `ST_UT_Eightball.FireRockets`
+  G, #7 `ST_enforcer.PlaySelect` Owner) are **not fixable by changing build** — they're live in the
+  dev tip. Also can't self-patch: no local source (only `.u`) + ACE `MD5Enable=True` validates the
+  package hash, so a modified `.u` would break client validation. Correct path = upstream bug report
+  to rxut (draft saved 2026-08-05). [[failed-load-offenders]] skins are the same "leave it" class.
+- **Server `[Engine.GameEngine]` facts (from live `UnrealTournament.ini`, 2026-08-05):**
+  `FixUpMoversBoundingBox` is NOT in the ini but the 469e default is ON (log shows it running &
+  auto-patching movers) — so finding #4 (CyberSpace movers) is already auto-mitigated; setting the
+  flag is a no-op. Skin packages `CommandoSkins`/`FCommandoSkins`/`SGirlSkins`/`SoldierSkins` ARE in
+  `ServerPackages` (so finding #9 = missing texture *variants* within shipped packages, a version
+  mismatch, not a missing package). `tskmskins` and `ELD_TauntPack002` are NOT in ServerPackages.
 - WinSCP saved session name is `FMJ FTP Server` (shared with UT99 ChatLog Analyzer).
 - Remote log is `/System/server-old.log`; `DeleteAfterDownload=$false` (never delete it).
 - Downloaded log and report both go to `D:\Dropbox\Gaming\UTLogs\ServerLogs` (NOT `_system`).
