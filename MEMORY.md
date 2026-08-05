@@ -5,6 +5,16 @@ See `CLAUDE.md` for project-specific details.
 
 ## CONFIRMED ROOT CAUSES
 
+- **05:00 scheduled-run collision with a system reboot (2026-08-05).** The daily download
+  failed to produce a log: the run stopped right after logging "Fetching…", no `winscp-*.xml`
+  was written, task result `0x41306` (SCHED_S_TASK_TERMINATED), action return code `0x800705AB`
+  (ERROR_SHUTDOWN_IN_PROGRESS). Event logs showed a separate **"Daily Restart"** task running
+  `shutdown /r /f /t 0` at **05:00** (every 3 days) — the exact minute the analyzer fires — so
+  the `/f` force-reboot killed pwsh ~5s into the run, before WinSCP connected. Not a script,
+  WinSCP, or server-log problem. No retries fired because the reboot wiped the restart-on-failure
+  chain and the daily trigger had already fired (not "missed"), so StartWhenAvailable didn't help.
+  **Fix:** moved analyzer to **04:25** (35-min head start; retry grid 04:25/04:55/05:25/05:55
+  skips 05:00). Verified: manual run succeeded (LastResult 0), full report written.
 - **Player "connects" ≠ churn.** In UT99 every map travel forces a client reconnect, so a
   `NetComeGo Open` (and a matching NPLoader `Player Join`) fires per map round plus any mid-game
   rejoin. A high per-player connect count is normal for someone who played all evening. Real
@@ -25,8 +35,12 @@ See `CLAUDE.md` for project-specific details.
 - Analysis is AI-assisted: a deterministic deduped **digest** (not raw lines) is sent to the
   Anthropic API (`claude-sonnet-4-6`); `ANTHROPIC_API_KEY` is a User env var.
 - Docs (`README.md`) are finalized only after a live end-to-end test + explicit approval.
-- Scheduled task runs daily at **05:00** (server boots 02:00–05:00, creating the log). Retry
-  is Task Scheduler restart-on-failure: 30-min interval × 12. `RunOnlyIfNetworkAvailable` is
+- Scheduled task runs daily at **04:25** (server boots 02:00–05:00, creating the log). Retry
+  is Task Scheduler restart-on-failure: 30-min interval × 3 (04:25/04:55/05:25/05:55).
+  **Do NOT use 05:00** — the separate "Daily Restart" task force-reboots (`shutdown /r /f`) at
+  05:00 every 3 days and kills the run (see CONFIRMED ROOT CAUSES). The 30-min retry grid must
+  also stay off 05:00, hence 04:25 (not 04:30, whose grid would hit 05:00).
+  `RunOnlyIfNetworkAvailable` is
   intentionally OFF so a no-network start still runs, fails fast (exit 1), and restarts — this
   covers both "log not created yet" and "no network" with one mechanism.
 - Task principal is **S4U + RunLevel Highest** ("run whether logged on or not" + "run with
@@ -40,6 +54,17 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-05 — Added **Failed-to-Load Offenders** report section: new `$failLoadDict` collector
+  in `Get-ServerLogDigest` captures every `^Failed to load "…"` body verbatim (real names kept,
+  identical messages counted), exposed as `Digest.FailedLoads` (uncapped, sorted desc), rendered
+  as a `| Count | Message |` table before Recommendations in `New-ServerLogReport`. Local-only —
+  NOT added to `ConvertTo-DigestText`, so API token cost is unchanged. Surfaced `ELD_TauntPack002`
+  as an entirely-missing package (30 hits) that the `<x>` bucketing had hidden. Verified via
+  `-NoFetch -LogFile` against `FMJ Server Log 2026-08-04.log`.
+- 2026-08-05 — Diagnosed 05:00 download failure as a collision with the "Daily Restart" task
+  (`shutdown /r /f` at 05:00, every 3 days). Re-registered analyzer task at **04:25** with
+  restart-on-failure 30-min × **3** (was ×12). Verified via manual run (LastResult 0, report
+  written). Requires elevated shell to re-register (S4U/Highest).
 - 2026-08-03 — User signed off. Wrote README.md, added .gitignore (ignores State/Runlogs/*.xml/
   *.ini), created private local + remote GitHub repo, initial commit + push.
 - 2026-08-03 — Task registered S4U + RunLevel Highest (run whether logged on or not + highest

@@ -28,6 +28,9 @@ The report contains:
 - **Players & Connections** — per-player connects, session times, peak concurrent players, churn detection.
 - **Issues by Map** — warnings/script-warnings/errors attributed to the map that caused them.
 - **Anti-Cheat / Integrity**, **Session & Config Overview**, recurring-signature tables.
+- **Failed-to-Load Offenders** — every distinct `Failed to load "…"` message with its real
+  package/object name kept verbatim (not bucketed to `<x>`) and an occurrence count, all
+  offenders listed (uncapped). Surfaces exactly which packages/files the server is missing.
 - **Recommendations** checklist and a collapsible raw-tally appendix.
 
 ---

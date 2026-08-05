@@ -204,6 +204,7 @@ function Get-ServerLogDigest {
 
     $tagHist = [ordered]@{}
     $warnDict = @{}; $swDict = @{}; $errDict = @{}; $acDict = @{}; $pkgDict = @{}
+    $failLoadDict = @{}   # verbatim 'Failed to load "<name>": ...' messages, real names kept, counted
     $maps = [System.Collections.Generic.List[string]]::new()
     $mapSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $mutators = [System.Collections.Generic.List[string]]::new()
@@ -302,6 +303,12 @@ function Get-ServerLogDigest {
         if ($body -match '(?i)(version mismatch|package mismatch|wrong version|failed to load package|guid mismatch)') {
             Add-Signature $pkgDict (Get-WarningSignature $body) $body $currentMap
         }
+        # Verbatim failed-to-load offenders: keep the real package/object name (NOT '<x>')
+        # and count identical messages. Anchored '"' excludes ScriptLog '...so load...' fallbacks.
+        if ($body -match '^Failed to load "') {
+            $flMsg = ($body -replace '\s+', ' ').Trim()
+            Add-Signature $failLoadDict $flMsg $flMsg $currentMap
+        }
         if ($body -match '(?i)\b(timeout|timed out)\b') { $timeouts++ }
         if ($body -match '(?i)\b(connection failed|net error|disconnect)\b') { $disconnects++ }
 
@@ -395,6 +402,7 @@ function Get-ServerLogDigest {
         ServerPackages = @($serverPackages)
         TagHistogram   = $tagHist
         Warnings       = & $topSig $warnDict
+        FailedLoads    = @($failLoadDict.Values | Sort-Object -Property Count -Descending)   # all offenders, uncapped
         ScriptWarnings = & $topSig $swDict
         Errors         = & $topSig $errDict
         AntiCheat      = & $topSig $acDict
@@ -869,6 +877,14 @@ function New-ServerLogReport {
     if (@($Digest.Warnings).Count -gt 0) {
         $null = $sb.Append('| Count | Signature |'+$A+'|--:|---|'+$A)
         foreach ($s in $Digest.Warnings) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
+        $null = $sb.Append($A)
+    } else { $null = $sb.Append('_None._'+$A+$A) }
+
+    # --- Failed-to-load offenders (verbatim names, all of them) ---
+    $null = $sb.Append('## Failed-to-Load Offenders'+$A+$A)
+    if (@($Digest.FailedLoads).Count -gt 0) {
+        $null = $sb.Append('| Count | Message |'+$A+'|--:|---|'+$A)
+        foreach ($s in $Digest.FailedLoads) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
         $null = $sb.Append($A)
     } else { $null = $sb.Append('_None._'+$A+$A) }
 
