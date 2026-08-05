@@ -24,6 +24,25 @@ See `CLAUDE.md` for project-specific details.
 
 ## RULED-OUT THEORIES
 
+- **Finding #1 `DM-FortressOfNalitude` NaN vectors in `MultiLineCheck` (28×) — dismissed/monitor.**
+  Rated HIGH by the AI, but `try trace for NaN vector` is the engine's **guard firing** (it detects
+  and rejects the degenerate trace), so real-world impact is ~one skipped collision trace per hit, not
+  a crash/corruption. No players have reported collision problems on that map. The log doesn't name the
+  offending actor, there's no clean local repro to test a fix, and redeploying an edited `.unr` forces a
+  client-side version/GUID re-download on a pub server — poor cost/benefit for silent log noise. If it
+  ever draws real complaints: first look for an updated community release of the map (swap the `.unr`),
+  then as a last resort Rebuild+resave a COPY in UnrealEd 2 469e before any manual actor-hunt (actors at
+  origin (0,0,0), degenerate movers/decoration collision). Disposition: **monitor, no action.** (2026-08-05)
+- **Finding #5 `NexgenPlayerLookup112N.NexgenPlayerLookup.notifyEvent Accessed None 'Receiver'`
+  — cosmetic, no fix exists, KEEP the plugin.** User actively uses NexgenPlayerLookup's player-
+  history/lookup DB, so disabling the `ServerActors=NexgenPlayerLookup112N.NexgenPlayerLookup`
+  line (which would remove the warning at source) is OFF the table. No build fixes it: the plugin
+  is abandoned (official `NexgenPlayerLookup202` = v2.02, June 2014, a different/older lineage than
+  the `112N` rebuild; no changelog anywhere addresses the Receiver None). Core Nexgen 113 was in
+  dev through Aug 2022 but stalled and concerns the main controller, not this plugin. The None just
+  means a lookup result is dropped when a player disconnects mid-query (frequent on high-churn maps
+  like DM-Peak) — no DB loss, no gameplay effect. Disposition: **leave it.** No source locally to
+  self-patch. (Researched 2026-08-05; sources: ut99.org t=5179, t=3839, t=13841.)
 - **Client-brought cosmetic `Failed to load` packages are NOT server problems — do not deploy
   them.** `ELD_TauntPack002` (a `Voice=`/VoicePack taunt pack, `ELD_DNF1` = DNF taunts) and the
   custom skins (`CommandoSkins.goth*Blake`, `SGirlSkins.goth*Aryss`, `tskmskins.MekS`, etc.) come
@@ -79,6 +98,12 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-05 — Triaged all 08-04 report findings to disposition (see RULED-OUT/CONVENTIONS): ELD/skins/
+  voice = client cosmetic, leave; #4 movers = engine auto-mitigated; #3/#6/#7 IG+ None-derefs = cosmetic,
+  can't self-patch (no source + ACE MD5), drafted upstream GitHub issue (`IGPlus-Issue-AccessedNone-draft.md`);
+  #5 Nexgen Receiver = cosmetic, plugin abandoned, keep feature; #1 FortressOfNalitude NaN = engine-guarded,
+  no complaints, monitor. Net: no locally-fixable code issues in this batch. Pulled live UnrealTournament.ini
+  to verify (kept untracked per *.ini rule).
 - 2026-08-05 — Added **Failed-to-Load Offenders** report section: new `$failLoadDict` collector
   in `Get-ServerLogDigest` captures every `^Failed to load "…"` body verbatim (real names kept,
   identical messages counted), exposed as `Digest.FailedLoads` (uncapped, sorted desc), rendered
