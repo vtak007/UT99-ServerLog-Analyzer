@@ -41,7 +41,8 @@ morning run over the previous night's rotated log is named for the session it co
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
-  `Log file closed` marker, so `Digest.LogClosed` is normally empty — use First/Last instead.
+  `Log file closed` marker, so `Digest.LogClosed` is normally empty — it is still collected but
+  no longer rendered (the dashboard row was dropped); use First/Last as the coverage window.
 - **Bounded digest:** `Get-ServerLogDigest` deduplicates issue lines into signatures with
   counts (top-N per bucket via `MaxSignaturesPerBucket`). Only the digest — never the raw
   11k+ lines — is sent to the API, so token cost stays flat regardless of log size.

@@ -80,7 +80,8 @@ See `CLAUDE.md` for project-specific details.
   staging folder because the remote name isn't known in advance. Newest is always the wanted one.
   `DeleteAfterDownload=$false` (never delete them).
 - **A rotated log has no `Log file closed` line** — the server is killed/restarted, not shut down
-  cleanly, so `Digest.LogClosed` is empty and that dashboard row renders blank. The log window
+  cleanly, so `Digest.LogClosed` is empty — the "Log session closed" dashboard row was therefore
+  dropped on 2026-08-09 (the field is still collected, just not rendered). The log window
   comes from `FirstEntry`/`LastEntry` instead, min/max'd over every timestamp format present:
   `Log file open MM/dd/yy`, `NetComeGo MM/dd/yy HH:mm:ss`, MapVote `yyyy/MM/dd Time > HH:mm:ss.fff`,
   and ACE `[TIME] dd-MM-yyyy / HH:mm:ss` — **ACE is day-first**, confirmed by cross-checking an
@@ -109,6 +110,8 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-09 — Dropped the permanently-blank "Log session closed" Health Dashboard row
+  (superseded by First/Last log entry). `Digest.LogClosed` is still collected, just not rendered.
 - 2026-08-09 — Added **log coverage window** to the report: digest now tracks `FirstEntry`/
   `LastEntry`/`SpanText` by min/max over all four timestamp formats in the log. Surfaced as a
   bold `**Log covers:**` line under the H1, `log_first_entry`/`log_last_entry` frontmatter, three
