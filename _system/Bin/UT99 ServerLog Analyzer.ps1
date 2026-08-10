@@ -804,8 +804,9 @@ function New-ServerLogReport {
     $vsLabel = if ($td) { ' (Δ vs ' + $Trend.PrevDate + ')' } else { '' }
     $null = $sb.Append('## Health Dashboard'+$A+$A)
     $null = $sb.Append('| Metric | Value' + $vsLabel + ' |'+$A+'|---|---|'+$A)
+    # No 'Log session closed' row: rotated logs carry no 'Log file closed' marker, so it was
+    # always blank. First/Last log entry below is the real coverage window.
     $null = $sb.Append('| Log session opened | ' + (Format-MdCell $Digest.LogOpen) + ' |'+$A)
-    $null = $sb.Append('| Log session closed | ' + (Format-MdCell $Digest.LogClosed) + ' |'+$A)
     $null = $sb.Append('| First log entry | ' + (Format-MdCell $Digest.FirstEntryText) + ' |'+$A)
     $null = $sb.Append('| Last log entry | ' + (Format-MdCell $Digest.LastEntryText) + ' |'+$A)
     $null = $sb.Append('| Log covers | ' + (Format-MdCell $Digest.SpanText) + ' |'+$A)
