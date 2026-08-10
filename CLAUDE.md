@@ -1,6 +1,6 @@
 # UT99 ServerLog Analyzer — Project Instructions
 
-Downloads the FMJ server's rotated `server-old.log` via WinSCP, analyzes it with the
+Downloads the FMJ server's newest rotated log (`/Logs/server.yyyymmdd_hhmm.log`) via WinSCP, analyzes it with the
 Anthropic API, and writes a professional Obsidian markdown report. Modeled on the
 sibling **UT99 ChatLog Analyzer** project (same WinSCP-session + API patterns).
 
@@ -33,11 +33,20 @@ morning run over the previous night's rotated log is named for the session it co
 
 ## Design notes
 
+- **Remote log is timestamped, not fixed-name:** each server start rotates the previous log to
+  `/Logs/server.yyyymmdd_hhmm.log` and old ones accumulate. Config exposes `RemoteLogFolder` +
+  `RemoteLogMask` (`server.*.log`); `Invoke-ServerFetch` uses WinSCP `get -latest` into a
+  `_incoming` staging folder, then resolves the downloaded file (its remote name is unknown
+  until it lands) and renames it by the log's session date.
+- **Log coverage window:** the digest scans every timestamp format the log actually contains
+  (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
+  and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
+  `Log file closed` marker, so `Digest.LogClosed` is normally empty — use First/Last instead.
 - **Bounded digest:** `Get-ServerLogDigest` deduplicates issue lines into signatures with
   counts (top-N per bucket via `MaxSignaturesPerBucket`). Only the digest — never the raw
   11k+ lines — is sent to the API, so token cost stays flat regardless of log size.
 - **Buckets:** hard errors, `Warning:`, `ScriptWarning:`/Accessed None (grouped by
   `package.class.function` + offending variable), anti-cheat/integrity (UTPure/IGPlus/NSC),
   package/version. Plus a tag histogram and network counters (opens/closes/unique IPs/timeouts).
-- `DeleteAfterDownload` is `$false` — never delete the server's own rotated log.
+- `DeleteAfterDownload` is `$false` — never delete the server's own rotated logs.
 - Player IPs (PII) are counted, not sent verbatim to the API.

@@ -110,10 +110,13 @@ function Invoke-ServerFetch {
 
     $remoteFolder = $Config.RemoteLogFolder
     if (-not $remoteFolder.EndsWith('/')) { $remoteFolder += '/' }
-    $remotePath = $remoteFolder + $Config.RemoteLogName
+    $remoteMask = $remoteFolder + $Config.RemoteLogMask
 
-    $stagePath  = Join-Path $LogFolder ('_incoming-' + $Config.RemoteLogName)
-    if (Test-Path $stagePath) { Remove-Item $stagePath -Force -ErrorAction SilentlyContinue }
+    # The remote name carries a rotation timestamp (server.yyyymmdd_hhmm.log),
+    # so it isn't known ahead of time - stage into a folder and resolve after.
+    $stageFolder = Join-Path $LogFolder '_incoming'
+    if (Test-Path $stageFolder) { Remove-Item $stageFolder -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Path $stageFolder -Force | Out-Null
 
     $deleteFlag = if ($Config.DeleteAfterDownload) { '-delete ' } else { '' }
 
@@ -123,7 +126,7 @@ function Invoke-ServerFetch {
         'option transfer binary'
         'option reconnecttime 30'
         ('open "{0}"' -f $Config.WinSCPSessionName)
-        ('get {0}"{1}" "{2}"' -f $deleteFlag, $remotePath, $stagePath)
+        ('get -latest {0}"{1}" "{2}\"' -f $deleteFlag, $remoteMask, $stageFolder)
         'exit'
     )
     $wscpScript = $wscpLines -join "`r`n"
@@ -132,7 +135,7 @@ function Invoke-ServerFetch {
     $wscpXmlLog = Join-Path $StateFolder ("winscp-{0}.xml" -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'))
     Set-Content -Path $tempScript -Value $wscpScript -Encoding ASCII
 
-    Write-RunLog INFO ("Fetching {0} from server..." -f $remotePath)
+    Write-RunLog INFO ("Fetching newest {0} from server..." -f $remoteMask)
 
     $stdout = & $Config.WinSCPcomPath /script=$tempScript /xmllog=$wscpXmlLog /xmlgroups 2>&1 | Out-String
     $exit = $LASTEXITCODE
@@ -144,13 +147,19 @@ function Invoke-ServerFetch {
 
     if ($exit -ne 0) {
         Write-RunLog ERROR "WinSCP exit code $exit. See $wscpXmlLog and run log for details."
-        Write-RunLog WARN  "The log may not exist yet (server not booted) or the server is unreachable (no network). If run by the scheduled task, it will retry in 30 minutes."
+        Write-RunLog WARN  ("No log matching {0} yet (server not booted since the last rotation), or the server is unreachable (no network). If run by the scheduled task, it will retry in 30 minutes." -f $remoteMask)
         throw "WinSCP fetch failed (exit $exit)."
     }
-    if (-not (Test-Path $stagePath)) {
-        throw "WinSCP reported success but $stagePath was not created."
+
+    $staged = @(Get-ChildItem -LiteralPath $stageFolder -File | Sort-Object Name -Descending)
+    if ($staged.Count -eq 0) {
+        throw ("WinSCP reported success but no file matching {0} was downloaded to {1}." -f $remoteMask, $stageFolder)
     }
-    Write-RunLog INFO ("Fetch completed: {0} ({1:N0} bytes)" -f $stagePath, (Get-Item $stagePath).Length)
+    if ($staged.Count -gt 1) {
+        Write-RunLog WARN ("{0} files staged; using the newest by name ({1})." -f $staged.Count, $staged[0].Name)
+    }
+    $stagePath = $staged[0].FullName
+    Write-RunLog INFO ("Fetch completed: {0} ({1:N0} bytes)" -f $staged[0].Name, $staged[0].Length)
     return $stagePath
 }
 
@@ -229,6 +238,28 @@ function Get-ServerLogDigest {
         return $null
     }
 
+    # Log coverage window. The engine stamps no per-line time, and a rotated log
+    # has no 'Log file closed' marker, so the window is derived from every
+    # timestamp format that does appear, and min/max'd.
+    #   Log file open, MM/dd/yy HH:mm:ss
+    #   NetComeGo Open/Close       MM/dd/yy HH:mm:ss
+    #   MapVote  ... yyyy/MM/dd Time > HH:mm:ss.fff
+    #   ACE      ... [TIME] dd-MM-yyyy / HH:mm:ss   (day first)
+    $firstTs = $null; $lastTs = $null
+    $parseAnyTs = {
+        param($b)
+        if ($b -match '\b(\d{4}/\d{2}/\d{2})\s+Time\s*>\s*(\d{2}:\d{2}:\d{2})') {
+            try { return [datetime]::ParseExact(($matches[1] + ' ' + $matches[2]), 'yyyy/MM/dd HH:mm:ss', $inv) } catch { return $null }
+        }
+        if ($b -match '\[TIME\]\s+(\d{2}-\d{2}-\d{4})\s*/\s*(\d{2}:\d{2}:\d{2})') {
+            try { return [datetime]::ParseExact(($matches[1] + ' ' + $matches[2]), 'dd-MM-yyyy HH:mm:ss', $inv) } catch { return $null }
+        }
+        if ($b -match '\b(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{2}:\d{2}:\d{2})\b') {
+            return (& $parseTs $matches[1])
+        }
+        return $null
+    }
+
     foreach ($line in $lines) {
         if ($line -match '^(\w+):\s?(.*)$') {
             $tag = $matches[1]; $body = $matches[2]
@@ -293,6 +324,15 @@ function Get-ServerLogDigest {
                 }
                 elseif ($body -match '^Open') { $netOpens++; if ($body -match '(\d{1,3}(?:\.\d{1,3}){3}):\d+') { $null = $ipSet.Add($matches[1]) } }
                 elseif ($body -match '^Close') { $netCloses++ }
+            }
+        }
+
+        # Log coverage window (independent of tag; any recognised timestamp counts)
+        if ($body -match '\d{2}:\d{2}:\d{2}') {
+            $ts = & $parseAnyTs $body
+            if ($ts) {
+                if (-not $firstTs -or $ts -lt $firstTs) { $firstTs = $ts }
+                if (-not $lastTs  -or $ts -gt $lastTs)  { $lastTs  = $ts }
             }
         }
 
@@ -387,9 +427,19 @@ function Get-ServerLogDigest {
         }
     )
 
+    $spanText = if ($firstTs -and $lastTs) {
+        $d = $lastTs - $firstTs
+        if ($d.TotalHours -ge 1) { '{0}h {1}m' -f [int]$d.TotalHours, $d.Minutes } else { '{0}m' -f [int]$d.TotalMinutes }
+    } else { '' }
+
     [pscustomobject]@{
         LogPath        = $Path
         LineCount      = $lineCount
+        FirstEntry     = $firstTs
+        LastEntry      = $lastTs
+        FirstEntryText = if ($firstTs) { $firstTs.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+        LastEntryText  = if ($lastTs)  { $lastTs.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
+        SpanText       = $spanText
         EngineVersion  = if ($rev) { "$engineVersion$rev" } else { $engineVersion }
         CommandLine    = $commandLine
         BaseDir        = $baseDir
@@ -529,6 +579,7 @@ function ConvertTo-DigestText {
     $sb = [System.Text.StringBuilder]::new()
     $null = $sb.AppendLine("ENGINE: $($Digest.EngineVersion)")
     $null = $sb.AppendLine("SESSION OPEN: $($Digest.LogOpen)   CLOSED: $($Digest.LogClosed)   RESTARTS(open-events): $($Digest.Restarts)")
+    $null = $sb.AppendLine("LOG COVERS: $($Digest.FirstEntryText) -> $($Digest.LastEntryText)  ($($Digest.SpanText))")
     $null = $sb.AppendLine("COMMAND LINE: $($Digest.CommandLine)")
     $null = $sb.AppendLine("MAPS PLAYED ($($Digest.Maps.Count)): $($Digest.Maps -join ', ')")
     $null = $sb.AppendLine("MUTATORS: $($Digest.Mutators -join ', ')")
@@ -716,12 +767,23 @@ function New-ServerLogReport {
     $null = $sb.Append('date: ' + $ReportDate.ToString('yyyy-MM-dd') + $A)
     $null = $sb.Append('engine: "' + $Digest.EngineVersion + '"'+$A)
     $null = $sb.Append('source_log: "' + (Split-Path $Digest.LogPath -Leaf) + '"'+$A)
+    $null = $sb.Append('log_first_entry: "' + $Digest.FirstEntryText + '"'+$A)
+    $null = $sb.Append('log_last_entry: "' + $Digest.LastEntryText + '"'+$A)
     $null = $sb.Append('generated: ' + (Get-Date).ToString('yyyy-MM-dd HH:mm') + $A)
     $null = $sb.Append('overall_status: "' + $status + '"'+$A)
     $null = $sb.Append('tags: [ut99, server-log, fmj]'+$A)
     $null = $sb.Append('---'+$A+$A)
 
     $null = $sb.Append('# FMJ Server Log Analysis — ' + $ReportDate.ToString('dddd, dd MMMM yyyy') + $A+$A)
+
+    # --- Log coverage window (first/last timestamped entry in the log) ---
+    if ($Digest.FirstEntry -and $Digest.LastEntry) {
+        $null = $sb.Append('**Log covers:** ' + $Digest.FirstEntry.ToString('ddd dd MMM yyyy HH:mm:ss') +
+                           '  →  ' + $Digest.LastEntry.ToString('ddd dd MMM yyyy HH:mm:ss') +
+                           '   (' + $Digest.SpanText + ')' + $A+$A)
+    } else {
+        $null = $sb.Append('**Log covers:** _no timestamped entries found_' + $A+$A)
+    }
 
     # --- Executive summary callout ---
     $statusCallout = switch ($status) {
@@ -744,6 +806,9 @@ function New-ServerLogReport {
     $null = $sb.Append('| Metric | Value' + $vsLabel + ' |'+$A+'|---|---|'+$A)
     $null = $sb.Append('| Log session opened | ' + (Format-MdCell $Digest.LogOpen) + ' |'+$A)
     $null = $sb.Append('| Log session closed | ' + (Format-MdCell $Digest.LogClosed) + ' |'+$A)
+    $null = $sb.Append('| First log entry | ' + (Format-MdCell $Digest.FirstEntryText) + ' |'+$A)
+    $null = $sb.Append('| Last log entry | ' + (Format-MdCell $Digest.LastEntryText) + ' |'+$A)
+    $null = $sb.Append('| Log covers | ' + (Format-MdCell $Digest.SpanText) + ' |'+$A)
     $null = $sb.Append('| Log lines | ' + $Digest.LineCount + ' |'+$A)
     $null = $sb.Append('| Maps played | ' + $Digest.Maps.Count + ' |'+$A)
     $null = $sb.Append('| Connection attempts (open / close) | ' + $n.Opens + ' / ' + $n.Closes + ' |'+$A)
@@ -936,6 +1001,7 @@ try {
         $finalName = $Config.LocalLogNamePattern -replace '\{date\}', $sessionDate.ToString('yyyy-MM-dd')
         $sourceLog = Join-Path $LogFolder $finalName
         Move-Item -LiteralPath $staged -Destination $sourceLog -Force
+        Remove-Item -LiteralPath (Split-Path $staged -Parent) -Recurse -Force -ErrorAction SilentlyContinue
         Write-RunLog INFO "Saved downloaded log as: $sourceLog"
     }
     else {

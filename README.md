@@ -1,6 +1,6 @@
 # UT99 ServerLog Analyzer
 
-Automatically downloads the FMJ UT99 server's rotated log (`server-old.log`) via WinSCP,
+Automatically downloads the FMJ UT99 server's newest rotated log (`/Logs/server.<timestamp>.log`) via WinSCP,
 analyzes it for issues, anomalies, and problems using the Anthropic API, and writes a clean,
 professional **Obsidian-flavored markdown report** — with severity-ranked findings, root
 causes, and proposed solutions.
@@ -19,7 +19,9 @@ Each run writes two files to `D:\Dropbox\Gaming\UTLogs\ServerLogs`:
 
 The report contains:
 
-- **YAML frontmatter** (status, engine, date, tags) for Obsidian.
+- **YAML frontmatter** (status, engine, date, first/last log entry, tags) for Obsidian.
+- **Log coverage line** at the top — the first and last timestamped entry in the log and the
+  elapsed span (e.g. `Sat 08 Aug 2026 04:35:19 → Sun 09 Aug 2026 01:19:55 (21h 44m)`).
 - **Executive summary** and an overall status callout (Healthy / Minor Issues / Needs Attention / Critical).
 - **Health Dashboard** with day-over-day deltas.
 - **Changes Since Last Run** — brand-new and resolved issue signatures.
@@ -37,7 +39,10 @@ The report contains:
 
 ## How it works
 
-1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads `/System/server-old.log`.
+1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads the **newest** file
+   matching `/Logs/server.*.log` (`get -latest`). Each server start rotates the previous log to
+   `/Logs/server.yyyymmdd_hhmm.log`, and these accumulate, so the name isn't known in advance —
+   the download is staged to a temp folder and then renamed by the log's own session date.
 2. **Digest** — a deterministic regex pre-scan deduplicates issue lines into *signatures with
    counts* (top-N per bucket), plus a tag histogram, per-map attribution, and connection/player
    analytics. Only this bounded digest — never the raw log — is sent to the API, so token cost
@@ -72,7 +77,7 @@ are shared.)
 ## Usage
 
 ```powershell
-# Full run: download server-old.log, analyze, write report.
+# Full run: download the newest /Logs/server.*.log, analyze, write report.
 .\"UT99 ServerLog Analyzer.ps1"
 
 # Offline parse test (no download, no API cost).
@@ -101,13 +106,18 @@ are shared.)
 .\Register-DailyTask.ps1 -Unregister
 ```
 
-The task runs **daily at 05:00** (the server boots between 02:00 and 05:00, creating the log).
+The task runs **daily at 04:25** (the server boots between 02:00 and 05:00, creating the log).
 It is registered to **run whether you are logged on or not**, with **highest privileges**
 (S4U + RunLevel Highest) — which is why registration needs an elevated shell.
 
-If a run fails because the log doesn't exist yet (server not booted) or there is no network,
-Windows Task Scheduler **retries every 30 minutes, up to 12 times**, until it succeeds. This is
-implemented via restart-on-failure: the script exits non-zero on any fetch failure.
+> **Do not move it to 05:00.** A separate "Daily Restart" task force-reboots the machine
+> (`shutdown /r /f`) at 05:00 every 3 days and will kill the run mid-fetch. The retry grid must
+> also miss 05:00, which is why the start time is 04:25 rather than 04:30.
+
+If a run fails because no new log exists yet (server not booted) or there is no network,
+Windows Task Scheduler **retries every 30 minutes, up to 3 times** (04:55 / 05:25 / 05:55),
+until it succeeds. This is implemented via restart-on-failure: the script exits non-zero on any
+fetch failure.
 
 Adjust with `-Time`, `-RetryIntervalMinutes`, and `-RetryCount`.
 
@@ -120,8 +130,8 @@ All settings live in `_system\config.ps1`. Key values:
 | Setting | Default | Purpose |
 |---|---|---|
 | `WinSCPSessionName` | `FMJ FTP Server` | Saved WinSCP session name |
-| `RemoteLogFolder` / `RemoteLogName` | `/System/` / `server-old.log` | Remote log location |
-| `DeleteAfterDownload` | `$false` | Never deletes the server's rotated log |
+| `RemoteLogFolder` / `RemoteLogMask` | `/Logs/` / `server.*.log` | Remote log folder and wildcard mask; the **newest** match is downloaded |
+| `DeleteAfterDownload` | `$false` | Never deletes the server's rotated logs |
 | `LocalLogFolder` | `…\UTLogs\ServerLogs` | Where the log **and** report are written |
 | `ApiModel` | `claude-sonnet-4-6` | Anthropic model |
 | `MaxSignaturesPerBucket` | `25` | Caps digest size (token control) |
