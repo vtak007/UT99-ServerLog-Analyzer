@@ -15,16 +15,18 @@ $Config = @{
     WinSCPcomPath     = 'C:\Program Files (x86)\WinSCP\WinSCP.com'
 
     # --- Server side ---------------------------------------------------------
-    # Remote folder containing the rotated server log (relative to the saved
-    # session's home directory). The UT99 engine writes server.log here and
-    # rotates it to server-old.log.
-    RemoteLogFolder   = '/System/'
+    # Remote folder containing the rotated server logs (relative to the saved
+    # session's home directory). Each server start rotates the previous log to
+    # /Logs/server.yyyymmdd_hhmm.log, so these accumulate over time.
+    RemoteLogFolder   = '/Logs/'
 
-    # Exact remote file to download.
-    RemoteLogName     = 'server-old.log'
+    # Wildcard mask matching the rotated logs. The newest file matching this
+    # mask is downloaded (WinSCP 'get -latest'), which is the log from the most
+    # recent server start - e.g. server.20260809_0330.log.
+    RemoteLogMask     = 'server.*.log'
 
     # If $true, delete the log from the server after a verified download.
-    # Leave $false - server-old.log is the server's own rotated log.
+    # Leave $false - these are the server's own rotated logs.
     DeleteAfterDownload = $false
 
     # --- Local paths ---------------------------------------------------------

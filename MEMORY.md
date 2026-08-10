@@ -73,7 +73,18 @@ See `CLAUDE.md` for project-specific details.
   `ServerPackages` (so finding #9 = missing texture *variants* within shipped packages, a version
   mismatch, not a missing package). `tskmskins` and `ELD_TauntPack002` are NOT in ServerPackages.
 - WinSCP saved session name is `FMJ FTP Server` (shared with UT99 ChatLog Analyzer).
-- Remote log is `/System/server-old.log`; `DeleteAfterDownload=$false` (never delete it).
+- **Remote log rotation changed 2026-08-09:** it is no longer the fixed `/System/server-old.log`.
+  Each server start rotates the previous log to **`/Logs/server.yyyymmdd_hhmm.log`** and old ones
+  **accumulate**. Config is now `RemoteLogFolder='/Logs/'` + `RemoteLogMask='server.*.log'` (the
+  key `RemoteLogName` no longer exists); the fetch uses WinSCP **`get -latest`** into a `_incoming`
+  staging folder because the remote name isn't known in advance. Newest is always the wanted one.
+  `DeleteAfterDownload=$false` (never delete them).
+- **A rotated log has no `Log file closed` line** — the server is killed/restarted, not shut down
+  cleanly, so `Digest.LogClosed` is empty and that dashboard row renders blank. The log window
+  comes from `FirstEntry`/`LastEntry` instead, min/max'd over every timestamp format present:
+  `Log file open MM/dd/yy`, `NetComeGo MM/dd/yy HH:mm:ss`, MapVote `yyyy/MM/dd Time > HH:mm:ss.fff`,
+  and ACE `[TIME] dd-MM-yyyy / HH:mm:ss` — **ACE is day-first**, confirmed by cross-checking an
+  ACE line against a same-instant NetComeGo line (`09-08-2026` == `08/09/26` == 9 Aug).
 - Downloaded log and report both go to `D:\Dropbox\Gaming\UTLogs\ServerLogs` (NOT `_system`).
 - Report/log filename date = the log's "Log file open" session date, not the run date.
 - Analysis is AI-assisted: a deterministic deduped **digest** (not raw lines) is sent to the
@@ -98,6 +109,16 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-09 — Added **log coverage window** to the report: digest now tracks `FirstEntry`/
+  `LastEntry`/`SpanText` by min/max over all four timestamp formats in the log. Surfaced as a
+  bold `**Log covers:**` line under the H1, `log_first_entry`/`log_last_entry` frontmatter, three
+  Health Dashboard rows, and one `LOG COVERS:` line in the API digest (so the model states the
+  real uptime instead of guessing). Verified: 2026-08-08 04:35:19 → 2026-08-09 01:19:55 (21h 44m).
+- 2026-08-09 — **Remote log path/name changed** to `/Logs/server.yyyymmdd_hhmm.log`. Config
+  `RemoteLogName` → `RemoteLogMask`; fetch rewritten to `get -latest` into a `_incoming` staging
+  folder, resolve the landed file, then move+cleanup. Verified live: pulled
+  `server.20260809_0330.log` (1.63 MB) in 4s → `FMJ Server Log 2026-08-08.log`, full report written.
+  Also corrected stale README scheduling text (said 05:00 ×12; actual is 04:25 ×3).
 - 2026-08-05 — Triaged all 08-04 report findings to disposition (see RULED-OUT/CONVENTIONS): ELD/skins/
   voice = client cosmetic, leave; #4 movers = engine auto-mitigated; #3/#6/#7 IG+ None-derefs = cosmetic,
   can't self-patch (no source + ACE MD5), drafted upstream GitHub issue (`IGPlus-Issue-AccessedNone-draft.md`);
