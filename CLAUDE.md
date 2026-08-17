@@ -25,7 +25,8 @@ of the same task (per global doc-update gating: after tested + approved).
 
 ## Output locations (not in the project folder)
 
-- Downloaded log: `D:\Dropbox\Gaming\UTLogs\ServerLogs\FMJ Server Log <date>.log`
+- Downloaded raw log: `D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.yyyymmdd_hhmm.log`
+  (original server-side name, kept as-is — see Design notes below).
 - Report: `D:\Dropbox\Gaming\UTLogs\ServerLogs\FMJ Server Log Analysis <date>.md`
 
 Report/log date = the log's own "Log file open" session date (falls back to today), so a
@@ -35,9 +36,12 @@ morning run over the previous night's rotated log is named for the session it co
 
 - **Remote log is timestamped, not fixed-name:** each server start rotates the previous log to
   `/Logs/server.yyyymmdd_hhmm.log` and old ones accumulate. Config exposes `RemoteLogFolder` +
-  `RemoteLogMask` (`server.*.log`); `Invoke-ServerFetch` uses WinSCP `get -latest` into a
-  `_incoming` staging folder, then resolves the downloaded file (its remote name is unknown
-  until it lands) and renames it by the log's session date.
+  `RemoteLogMask` (`server.*.log`); `Invoke-ServerFetch` uses WinSCP `get -latest` to download
+  straight into `RawLogFolder` (`ServerLogs\Raw Server Logs\`, config key `RawLogSubfolder`),
+  keeping the file's original server-side name — no rename, no staging folder. That folder is a
+  **permanent, never-wiped archive**: the newest-by-name match after each fetch is always the
+  file just downloaded, because the `yyyymmdd_hhmm` naming sorts lexicographically = chronologically
+  and WinSCP's `-latest` guarantees the newest remote file is always >= anything already archived.
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**

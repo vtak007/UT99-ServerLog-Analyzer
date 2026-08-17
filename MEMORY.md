@@ -76,9 +76,17 @@ See `CLAUDE.md` for project-specific details.
 - **Remote log rotation changed 2026-08-09:** it is no longer the fixed `/System/server-old.log`.
   Each server start rotates the previous log to **`/Logs/server.yyyymmdd_hhmm.log`** and old ones
   **accumulate**. Config is now `RemoteLogFolder='/Logs/'` + `RemoteLogMask='server.*.log'` (the
-  key `RemoteLogName` no longer exists); the fetch uses WinSCP **`get -latest`** into a `_incoming`
-  staging folder because the remote name isn't known in advance. Newest is always the wanted one.
-  `DeleteAfterDownload=$false` (never delete them).
+  key `RemoteLogName` no longer exists); the fetch uses WinSCP **`get -latest`**. Newest is always
+  the wanted one. `DeleteAfterDownload=$false` (never delete them).
+- **Raw logs archived directly, original naming kept (2026-08-17):** `Invoke-ServerFetch`
+  downloads straight into `RawLogFolder` (`ServerLogs\Raw Server Logs\`, config key
+  `RawLogSubfolder`) — no `_incoming` staging folder, no rename. That folder is a **permanent,
+  never-wiped archive**, not a scratch dir; after each fetch, the newest-by-name match
+  (`Get-ChildItem -Filter $Config.RemoteLogMask | Sort-Object Name -Descending`) is always the
+  file just downloaded, because `yyyymmdd_hhmm` naming sorts lexicographically = chronologically
+  and WinSCP's `-latest` guarantees the newest remote file is always >= anything already
+  archived. `LocalLogNamePattern` config key removed (nothing renames raw logs anymore); reports
+  still use `ReportNamePattern` in `LocalLogFolder`, unaffected.
 - **A rotated log has no `Log file closed` line** — the server is killed/restarted, not shut down
   cleanly, so `Digest.LogClosed` is empty — the "Log session closed" dashboard row was therefore
   dropped on 2026-08-09 (the field is still collected, just not rendered). The log window
@@ -86,7 +94,14 @@ See `CLAUDE.md` for project-specific details.
   `Log file open MM/dd/yy`, `NetComeGo MM/dd/yy HH:mm:ss`, MapVote `yyyy/MM/dd Time > HH:mm:ss.fff`,
   and ACE `[TIME] dd-MM-yyyy / HH:mm:ss` — **ACE is day-first**, confirmed by cross-checking an
   ACE line against a same-instant NetComeGo line (`09-08-2026` == `08/09/26` == 9 Aug).
-- Downloaded log and report both go to `D:\Dropbox\Gaming\UTLogs\ServerLogs` (NOT `_system`).
+- Downloaded raw log goes to `D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\` (original
+  server-side name); the report goes to `D:\Dropbox\Gaming\UTLogs\ServerLogs\` directly (NOT
+  `_system`) — kept separate on purpose so raw logs don't clutter the report/Obsidian view.
+- **GOTCHA:** `-NoAnalysis` still writes a real report file, just without the AI narrative. If
+  you smoke-test against a log whose session date already has a real analyzed report, it
+  **overwrites that report with a stub** (`overall_status: "Unknown"`). Hit this on 2026-08-17
+  testing the raw-log-archive change — clobbered the 08-13 and 08-16 reports, both recovered by
+  re-running without `-NoAnalysis`. Point smoke tests at a log/date you don't mind clobbering.
 - Report/log filename date = the log's "Log file open" session date, not the run date.
 - Analysis is AI-assisted: a deterministic deduped **digest** (not raw lines) is sent to the
   Anthropic API (`claude-sonnet-4-6`); `ANTHROPIC_API_KEY` is a User env var.
@@ -110,6 +125,15 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-17 — Raw logs now download directly into `ServerLogs\Raw Server Logs\` and keep their
+  original server-side name (`server.yyyymmdd_hhmm.log`) instead of being staged in `_incoming`
+  and renamed to `FMJ Server Log {date}.log`. Removed the now-unused `LocalLogNamePattern`
+  config key and the rename/move step; added `RawLogSubfolder` config key. Raw Server Logs is
+  now a permanent archive (never wiped) instead of a scratch staging folder. Verified: regression
+  test against an archived log, live end-to-end fetch (confirmed no `_incoming` created, all 10
+  prior archived logs untouched, correct newest-file resolution). Also found and fixed a
+  concurrent-connection parsing bug in ad-hoc analysis (player names containing `\|` broke a
+  naive markdown table parser) — not a code change, just a one-off scan gotcha worth remembering.
 - 2026-08-09 — Dropped the permanently-blank "Log session closed" Health Dashboard row
   (superseded by First/Last log entry). `Digest.LogClosed` is still collected, just not rendered.
 - 2026-08-09 — Added **log coverage window** to the report: digest now tracks `FirstEntry`/

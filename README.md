@@ -14,7 +14,8 @@ the sibling **UT99 ChatLog Analyzer** (same WinSCP saved-session + Anthropic API
 
 Each run writes two files to `D:\Dropbox\Gaming\UTLogs\ServerLogs`:
 
-- `FMJ Server Log <date>.log` — the downloaded log (named by its own session date).
+- `Raw Server Logs\server.yyyymmdd_hhmm.log` — the downloaded log, archived under its
+  original server-side name (kept separate from the reports below).
 - `FMJ Server Log Analysis <date>.md` — the report.
 
 The report contains:
@@ -40,9 +41,9 @@ The report contains:
 ## How it works
 
 1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads the **newest** file
-   matching `/Logs/server.*.log` (`get -latest`). Each server start rotates the previous log to
-   `/Logs/server.yyyymmdd_hhmm.log`, and these accumulate, so the name isn't known in advance —
-   the download is staged to a temp folder and then renamed by the log's own session date.
+   matching `/Logs/server.*.log` (`get -latest`) straight into `Raw Server Logs\`, keeping its
+   original server-side name. Each server start rotates the previous log to
+   `/Logs/server.yyyymmdd_hhmm.log`, and these accumulate both remotely and in the local archive.
 2. **Digest** — a deterministic regex pre-scan deduplicates issue lines into *signatures with
    counts* (top-N per bucket), plus a tag histogram, per-map attribution, and connection/player
    analytics. Only this bounded digest — never the raw log — is sent to the API, so token cost
@@ -81,7 +82,7 @@ are shared.)
 .\"UT99 ServerLog Analyzer.ps1"
 
 # Offline parse test (no download, no API cost).
-.\"UT99 ServerLog Analyzer.ps1" -NoFetch -NoAnalysis -LogFile "D:\Dropbox\Gaming\UTLogs\ServerLogs\FMJ Server Log 2026-08-02.log"
+.\"UT99 ServerLog Analyzer.ps1" -NoFetch -NoAnalysis -LogFile "D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.20260802_0330.log"
 
 # Re-analyze a specific local log without touching the server.
 .\"UT99 ServerLog Analyzer.ps1" -NoFetch -LogFile "<path to a .log>"
@@ -93,6 +94,12 @@ are shared.)
 | `-NoAnalysis` | Skip the Claude API call (deterministic tallies only, no cost). |
 | `-LogFile <path>` | Analyze a specific local log. |
 | `-Date <yyyy-MM-dd>` | Force the report date (default: the log's own session date). |
+
+> **Caution:** `-NoAnalysis` writes a real report file (just without the AI narrative) — if a
+> log's session date already has a real analyzed report, running `-NoAnalysis` against it
+> **overwrites that report with a no-analysis stub**. For smoke-testing changes, point
+> `-LogFile` at a log whose date you don't mind clobbering, or re-run without `-NoAnalysis`
+> afterward to restore it.
 
 ---
 
@@ -132,7 +139,8 @@ All settings live in `_system\config.ps1`. Key values:
 | `WinSCPSessionName` | `FMJ FTP Server` | Saved WinSCP session name |
 | `RemoteLogFolder` / `RemoteLogMask` | `/Logs/` / `server.*.log` | Remote log folder and wildcard mask; the **newest** match is downloaded |
 | `DeleteAfterDownload` | `$false` | Never deletes the server's rotated logs |
-| `LocalLogFolder` | `…\UTLogs\ServerLogs` | Where the log **and** report are written |
+| `LocalLogFolder` | `…\UTLogs\ServerLogs` | Where the report is written (and the parent of `RawLogSubfolder`) |
+| `RawLogSubfolder` | `Raw Server Logs` | Subfolder (under `LocalLogFolder`) where raw logs are archived, kept separate from reports |
 | `ApiModel` | `claude-sonnet-4-6` | Anthropic model |
 | `MaxSignaturesPerBucket` | `25` | Caps digest size (token control) |
 
