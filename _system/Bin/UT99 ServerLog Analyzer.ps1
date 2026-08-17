@@ -66,11 +66,12 @@ if (-not (Test-Path $ConfigPath)) {
 $Config = & $ConfigPath
 
 $LogFolder    = $Config.LocalLogFolder
+$RawLogFolder = Join-Path $LogFolder $Config.RawLogSubfolder
 $SystemFolder = $Config.SystemFolder
 $StateFolder  = Join-Path $SystemFolder 'State'
 $RunLogFolder = Join-Path $SystemFolder 'Runlogs'
 
-foreach ($p in @($LogFolder, $SystemFolder, $StateFolder, $RunLogFolder)) {
+foreach ($p in @($LogFolder, $RawLogFolder, $SystemFolder, $StateFolder, $RunLogFolder)) {
     if (-not (Test-Path $p)) { $null = New-Item -ItemType Directory -Force -Path $p }
 }
 
@@ -97,8 +98,10 @@ Write-RunLog INFO "Log/report folder: $LogFolder"
 
 function Invoke-ServerFetch {
     <#
-        Downloads the single named remote log to a staging file. Returns the
-        staging path, or $null if fetch was skipped.
+        Downloads the single newest-rotated remote log directly into the raw
+        log archive (RawLogFolder), keeping its original server-side name.
+        Returns the local path of the resolved file, or $null if fetch was
+        skipped.
     #>
     if ($NoFetch) {
         Write-RunLog INFO "Skipping fetch (-NoFetch)."
@@ -112,12 +115,6 @@ function Invoke-ServerFetch {
     if (-not $remoteFolder.EndsWith('/')) { $remoteFolder += '/' }
     $remoteMask = $remoteFolder + $Config.RemoteLogMask
 
-    # The remote name carries a rotation timestamp (server.yyyymmdd_hhmm.log),
-    # so it isn't known ahead of time - stage into a folder and resolve after.
-    $stageFolder = Join-Path $LogFolder '_incoming'
-    if (Test-Path $stageFolder) { Remove-Item $stageFolder -Recurse -Force -ErrorAction SilentlyContinue }
-    New-Item -ItemType Directory -Path $stageFolder -Force | Out-Null
-
     $deleteFlag = if ($Config.DeleteAfterDownload) { '-delete ' } else { '' }
 
     $wscpLines = @(
@@ -126,7 +123,7 @@ function Invoke-ServerFetch {
         'option transfer binary'
         'option reconnecttime 30'
         ('open "{0}"' -f $Config.WinSCPSessionName)
-        ('get -latest {0}"{1}" "{2}\"' -f $deleteFlag, $remoteMask, $stageFolder)
+        ('get -latest {0}"{1}" "{2}\"' -f $deleteFlag, $remoteMask, $RawLogFolder)
         'exit'
     )
     $wscpScript = $wscpLines -join "`r`n"
@@ -151,16 +148,18 @@ function Invoke-ServerFetch {
         throw "WinSCP fetch failed (exit $exit)."
     }
 
-    $staged = @(Get-ChildItem -LiteralPath $stageFolder -File | Sort-Object Name -Descending)
-    if ($staged.Count -eq 0) {
-        throw ("WinSCP reported success but no file matching {0} was downloaded to {1}." -f $remoteMask, $stageFolder)
+    # RawLogFolder is a permanent archive (never wiped), so it may hold many
+    # prior downloads alongside this one. The yyyymmdd_hhmm naming sorts
+    # lexicographically = chronologically, and WinSCP's -latest guarantees the
+    # newest remote file is always >= anything already archived locally, so
+    # the newest-by-name match is always the file we just fetched.
+    $matched = @(Get-ChildItem -LiteralPath $RawLogFolder -File -Filter $Config.RemoteLogMask | Sort-Object Name -Descending)
+    if ($matched.Count -eq 0) {
+        throw ("WinSCP reported success but no file matching {0} was found in {1}." -f $remoteMask, $RawLogFolder)
     }
-    if ($staged.Count -gt 1) {
-        Write-RunLog WARN ("{0} files staged; using the newest by name ({1})." -f $staged.Count, $staged[0].Name)
-    }
-    $stagePath = $staged[0].FullName
-    Write-RunLog INFO ("Fetch completed: {0} ({1:N0} bytes)" -f $staged[0].Name, $staged[0].Length)
-    return $stagePath
+    $fetchedPath = $matched[0].FullName
+    Write-RunLog INFO ("Fetch completed: {0} ({1:N0} bytes)" -f $matched[0].Name, $matched[0].Length)
+    return $fetchedPath
 }
 
 # ========================================================================== #
@@ -988,22 +987,16 @@ function New-ServerLogReport {
 
 try {
     # 1. Fetch (unless -NoFetch), then decide which local log to analyze.
-    $staged = Invoke-ServerFetch
+    $fetched = Invoke-ServerFetch
 
     if ($LogFile) {
         if (-not (Test-Path $LogFile)) { throw "Specified -LogFile not found: $LogFile" }
         $sourceLog = $LogFile
         Write-RunLog INFO "Analyzing specified log: $sourceLog"
     }
-    elseif ($staged) {
-        # Name the downloaded log by its session date (matches existing convention).
-        $sessionDate = if ($Date) { $Date } else { Get-LogSessionDate -Path $staged }
-        if (-not $sessionDate) { $sessionDate = Get-Date }
-        $finalName = $Config.LocalLogNamePattern -replace '\{date\}', $sessionDate.ToString('yyyy-MM-dd')
-        $sourceLog = Join-Path $LogFolder $finalName
-        Move-Item -LiteralPath $staged -Destination $sourceLog -Force
-        Remove-Item -LiteralPath (Split-Path $staged -Parent) -Recurse -Force -ErrorAction SilentlyContinue
-        Write-RunLog INFO "Saved downloaded log as: $sourceLog"
+    elseif ($fetched) {
+        # Already archived under its original name by Invoke-ServerFetch.
+        $sourceLog = $fetched
     }
     else {
         throw "Nothing to analyze: -NoFetch was set but no -LogFile was provided."

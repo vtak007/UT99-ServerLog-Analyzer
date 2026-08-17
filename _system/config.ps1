@@ -37,8 +37,13 @@ $Config = @{
     # from the log/report output folder above).
     SystemFolder      = 'D:\Dropbox\Computing1\BatchFiles_Scripts\Claude Projects\UT99\UT99 ServerLog Analyzer\_system'
 
-    # Naming patterns. {date} is replaced with the report date (yyyy-MM-dd).
-    LocalLogNamePattern = 'FMJ Server Log {date}.log'
+    # Subfolder (under LocalLogFolder) where raw downloaded logs are archived,
+    # kept separate from the generated reports. Raw logs keep their original
+    # server-side name (e.g. server.20260817_0500.log) - nothing renames them.
+    RawLogSubfolder = 'Raw Server Logs'
+
+    # Naming pattern for the generated report. {date} is replaced with the
+    # report date (yyyy-MM-dd).
     ReportNamePattern   = 'FMJ Server Log Analysis {date}.md'
 
     # --- Analysis ------------------------------------------------------------
