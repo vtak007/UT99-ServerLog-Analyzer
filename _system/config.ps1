@@ -58,6 +58,19 @@ $Config = @{
     # Keeps token usage flat regardless of how large the log is.
     MaxSignaturesPerBucket = 25
 
+    # --- Findings filtering ---------------------------------------------------
+    # Map name fragments (case-insensitive regex) whose findings are suppressed from the
+    # "## Findings" section only (still shown in "## Recommendations" if the AI mentions them
+    # there). These maps' issues recur every session and the admin has decided they don't need
+    # a fresh finding each report.
+    SuppressedFindingsMaps = @(
+        'CyberSpace',
+        'Temple[0O]fThe[wW]inds',
+        'CodexEvolved',
+        'AncientPhobos',
+        'DarkFortress'
+    )
+
     # --- Reports -------------------------------------------------------------
     # If $true, opens the report when the script finishes a non-scheduled run.
     # Has no effect when run by Task Scheduler.

@@ -845,6 +845,14 @@ function New-ServerLogReport {
     # --- Findings ---
     $null = $sb.Append('## Findings'+$A+$A)
     $findings = @($Analysis.findings)
+    $suppressedMapPatterns = @($Config.SuppressedFindingsMaps)
+    if ($suppressedMapPatterns.Count -gt 0) {
+        $suppressPattern = ($suppressedMapPatterns) -join '|'
+        $findings = @($findings | Where-Object {
+            $text = "$($_.title) $($_.evidence) $($_.root_cause) $($_.solution)"
+            $text -notmatch $suppressPattern
+        })
+    }
     if ($findings.Count -eq 0) {
         $null = $sb.Append('> [!success] No issues were flagged for this session.'+$A+$A)
     } else {

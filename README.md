@@ -27,7 +27,9 @@ The report contains:
 - **Health Dashboard** with day-over-day deltas.
 - **Changes Since Last Run** — brand-new and resolved issue signatures.
 - **Findings** — severity-ranked (`Critical`/`High`/`Medium`/`Low`), each with evidence,
-  root cause, and a proposed solution, using Obsidian callouts.
+  root cause, and a proposed solution, using Obsidian callouts. Findings about maps listed in
+  `SuppressedFindingsMaps` (chronic, already-known map-authoring issues) are dropped from this
+  section — they can still surface in Recommendations.
 - **Players & Connections** — per-player connects, session times, peak concurrent players, churn detection.
 - **Issues by Map** — warnings/script-warnings/errors attributed to the map that caused them.
 - **Anti-Cheat / Integrity**, **Session & Config Overview**, recurring-signature tables.
@@ -143,6 +145,7 @@ All settings live in `_system\config.ps1`. Key values:
 | `RawLogSubfolder` | `Raw Server Logs` | Subfolder (under `LocalLogFolder`) where raw logs are archived, kept separate from reports |
 | `ApiModel` | `claude-sonnet-4-6` | Anthropic model |
 | `MaxSignaturesPerBucket` | `25` | Caps digest size (token control) |
+| `SuppressedFindingsMaps` | `CyberSpace`, `Temple[0O]fThe[wW]inds`, `CodexEvolved`, `AncientPhobos`, `DarkFortress` | Case-insensitive regex fragments; findings mentioning these maps are dropped from **Findings** (still shown in **Recommendations**) |
 
 ---
 

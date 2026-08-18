@@ -55,6 +55,15 @@ See `CLAUDE.md` for project-specific details.
 
 ## PROJECT CONVENTIONS
 
+- **Five chronic maps are suppressed from `## Findings` (still allowed in `## Recommendations`).**
+  `Config.SuppressedFindingsMaps` (regex fragments, case-insensitive): CyberSpace,
+  Temple0fTheWinds (digit `0`, matched as `Temple[0O]fThe[wW]inds`), CodexEvolved,
+  AncientPhobos, DarkFortress. User decision 2026-08-18: these maps' issues recur every session
+  and don't need a fresh finding each report. Effective starting the 2026-08-18 run; historical
+  reports were NOT regenerated to retrofit this (only 2026-08-17 was regenerated, as a
+  verification test — confirmed all 8 of its findings that session happened to reference these
+  maps, so Findings correctly showed "No issues were flagged" while Recommendations still named
+  DM-CyberSpace/DM-Temple0fTheWinds/DM-FastPaced).
 - **Player Connections table columns must be padded, and `|` in cell text becomes `¦`, not `\|`.**
   `Format-MdCell` replaces a literal `|` with the look-alike `¦` character (a real pipe would
   split a table column even when backslash-escaped — Obsidian doesn't reliably honor `\|` inside
@@ -133,6 +142,11 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-18 — Added `Config.SuppressedFindingsMaps`: findings mentioning CyberSpace,
+  Temple0fTheWinds, CodexEvolved, AncientPhobos, or DarkFortress are now filtered out of
+  `## Findings` in `New-ServerLogReport` (Recommendations unaffected). Verified by regenerating
+  2026-08-17 with and without the filter (via `git stash`) — confirmed all 8 unfiltered findings
+  referenced these maps and were correctly suppressed, while Recommendations kept its mentions.
 - 2026-08-18 — Fixed Player Connections table misalignment: `Format-MdCell` now replaces a
   literal `|` in player names with `¦` (was backslash-escaped `\|`, which Obsidian's table
   renderer doesn't reliably honor), and the table builder now pads every cell to a per-column
