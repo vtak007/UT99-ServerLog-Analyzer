@@ -730,7 +730,7 @@ If a section has nothing, use an empty array or a short 'nothing notable' string
 
 function Format-MdCell { param([string]$Text)
     if ($null -eq $Text) { return '' }
-    return ($Text -replace '\r?\n', ' ' -replace '\|', '\|').Trim()
+    return ($Text -replace '\r?\n', ' ' -replace '\|', '¦').Trim()
 }
 
 function New-ServerLogReport {
@@ -882,10 +882,25 @@ function New-ServerLogReport {
     $players = @($Digest.Players)
     if ($players.Count -gt 0) {
         $fmtDur = { param($sec) $s=[int]$sec; if ($s -ge 3600) { '{0}h{1:d2}m' -f [int]($s/3600), [int](($s%3600)/60) } elseif ($s -ge 60) { '{0}m{1:d2}s' -f [int]($s/60), ($s%60) } else { "${s}s" } }
-        $null = $sb.Append('| Player | Connects | Avg session | Total time | IPs | First seen |'+$A+'|---|--:|--:|--:|--:|---|'+$A)
-        foreach ($p in ($players | Select-Object -First 30)) {
+        $colHeaders = @('Player','Connects','Avg session','Total time','IPs','First seen')
+        $colAligns  = @('L','R','R','R','R','L')
+        $rows = foreach ($p in ($players | Select-Object -First 30)) {
             $first = if ($p.First) { ([datetime]$p.First).ToString('HH:mm') } else { '' }
-            $null = $sb.Append('| ' + (Format-MdCell $p.Name) + ' | ' + $p.Joins + ' | ' + (& $fmtDur $p.AvgSec) + ' | ' + (& $fmtDur $p.TotalSec) + ' | ' + $p.IPs + ' | ' + $first + ' |'+$A)
+            ,@((Format-MdCell $p.Name), [string]$p.Joins, (& $fmtDur $p.AvgSec), (& $fmtDur $p.TotalSec), [string]$p.IPs, $first)
+        }
+        $colWidths = for ($i = 0; $i -lt $colHeaders.Count; $i++) {
+            $max = $colHeaders[$i].Length
+            foreach ($r in $rows) { if ($r[$i].Length -gt $max) { $max = $r[$i].Length } }
+            $max
+        }
+        $padCell = { param($text, $width, $align) if ($align -eq 'R') { $text.PadLeft($width) } else { $text.PadRight($width) } }
+        $headerCells = for ($i = 0; $i -lt $colHeaders.Count; $i++) { & $padCell $colHeaders[$i] $colWidths[$i] $colAligns[$i] }
+        $null = $sb.Append('| ' + ($headerCells -join ' | ') + ' |'+$A)
+        $sepCells = for ($i = 0; $i -lt $colHeaders.Count; $i++) { $dashes = '-' * [Math]::Max($colWidths[$i], 3); if ($colAligns[$i] -eq 'R') { $dashes.Substring(0, $dashes.Length - 1) + ':' } else { $dashes } }
+        $null = $sb.Append('|' + ($sepCells -join '|') + '|'+$A)
+        foreach ($r in $rows) {
+            $cells = for ($i = 0; $i -lt $r.Count; $i++) { & $padCell $r[$i] $colWidths[$i] $colAligns[$i] }
+            $null = $sb.Append('| ' + ($cells -join ' | ') + ' |'+$A)
         }
         $null = $sb.Append($A)
         # Real churn = many connects with consistently SHORT stays (rapid connect/drop),

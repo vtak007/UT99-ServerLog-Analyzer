@@ -55,3 +55,9 @@ morning run over the previous night's rotated log is named for the session it co
   package/version. Plus a tag histogram and network counters (opens/closes/unique IPs/timeouts).
 - `DeleteAfterDownload` is `$false` — never delete the server's own rotated logs.
 - Player IPs (PII) are counted, not sent verbatim to the API.
+- **Markdown table rendering (`Format-MdCell` + the Players & Connections table builder):**
+  cells are padded to a per-column max width so the raw `.md` source is visually column-aligned
+  even without a markdown previewer (VS Code raw view, etc.), not just when rendered. A literal
+  `|` in a player name is replaced with the look-alike `¦` (not backslash-escaped `\|`) because
+  some renderers (Obsidian) don't reliably honor `\|` escaping inside table cells and will still
+  split the column on it — `¦` can never be mistaken for a column separator, in source or render.
