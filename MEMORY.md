@@ -55,6 +55,14 @@ See `CLAUDE.md` for project-specific details.
 
 ## PROJECT CONVENTIONS
 
+- **Player Connections table columns must be padded, and `|` in cell text becomes `¦`, not `\|`.**
+  `Format-MdCell` replaces a literal `|` with the look-alike `¦` character (a real pipe would
+  split a table column even when backslash-escaped — Obsidian doesn't reliably honor `\|` inside
+  table cells). The Player Connections table builder in `New-ServerLogReport` computes a max
+  width per column (header + all rows) and pads every cell to it, so the raw `.md` source is
+  visually aligned even in a plain-text/VS-Code view, not just when rendered. Discovered
+  2026-08-18 from three reports (08-10, 08-14) where names like `||sT||Madara.//`, `Arepa|kHr`
+  broke the table.
 - **IG+ build is bleeding-edge, NOT stale — do not "update to the stable release."** The server
   runs `InstaGibPlus_next-netcode-ef237853` (commit `ef237853`, 2026-07-28) from rxut's fork's
   `next-netcode` branch (`github.com/rxut/InstaGibPlus`). This dev line is **~238 commits AHEAD**
@@ -125,6 +133,16 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-18 — Fixed Player Connections table misalignment: `Format-MdCell` now replaces a
+  literal `|` in player names with `¦` (was backslash-escaped `\|`, which Obsidian's table
+  renderer doesn't reliably honor), and the table builder now pads every cell to a per-column
+  max width so the raw markdown source is column-aligned too. Regenerated 7 of the 8 affected
+  reports (08-08, 08-09, 08-10, 08-12, 08-13, 08-15, 08-16, 08-17) through the real pipeline
+  against their original archived raw logs (matched by internal "Log file open" timestamp, since
+  raw filename date and session date can differ by a day). 08-14's raw log no longer exists (it
+  predates the 2026-08-17 permanent-archive change), so its table was patched in place with a
+  one-off Python script mirroring the same padding/substitution logic instead of being
+  regenerated. No raw log exists for 2026-08-11 either — no report was ever produced for that date.
 - 2026-08-17 — Raw logs now download directly into `ServerLogs\Raw Server Logs\` and keep their
   original server-side name (`server.yyyymmdd_hhmm.log`) instead of being staged in `_incoming`
   and renamed to `FMJ Server Log {date}.log`. Removed the now-unused `LocalLogNamePattern`

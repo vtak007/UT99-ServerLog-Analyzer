@@ -166,3 +166,7 @@ All settings live in `_system\config.ps1`. Key values:
   Dropbox. The digest sent to the API includes IP *counts*, not raw IP lists.
 - Token usage is bounded by the deduplicated digest, so even very large logs cost roughly the
   same to analyze.
+- Markdown tables (e.g. the Players & Connections table) are rendered with padded, column-aligned
+  cells so the raw `.md` source lines up visually even without a markdown previewer. A literal
+  `|` in a player name would otherwise break a table column; it's rendered as the look-alike
+  character `¦` instead.
