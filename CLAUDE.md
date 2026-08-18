@@ -55,6 +55,13 @@ morning run over the previous night's rotated log is named for the session it co
   package/version. Plus a tag histogram and network counters (opens/closes/unique IPs/timeouts).
 - `DeleteAfterDownload` is `$false` — never delete the server's own rotated logs.
 - Player IPs (PII) are counted, not sent verbatim to the API.
+- **Findings suppression by map (`Config.SuppressedFindingsMaps`):** in `New-ServerLogReport`,
+  before rendering `## Findings`, any finding whose title/evidence/root_cause/solution text
+  matches one of the (case-insensitive, regex) map-name fragments in config is dropped from that
+  section only — `## Recommendations` is untouched, since the AI is still free to mention those
+  maps there. Matching is done against the raw text (there's no structured per-finding map
+  field), so fragments must tolerate the exact spelling variants seen in logs, e.g.
+  `Temple[0O]fThe[wW]inds` for `DM-Temple0fTheWinds` (note the digit `0`, not letter `O`).
 - **Markdown table rendering (`Format-MdCell` + the Players & Connections table builder):**
   cells are padded to a per-column max width so the raw `.md` source is visually column-aligned
   even without a markdown previewer (VS Code raw view, etc.), not just when rendered. A literal
