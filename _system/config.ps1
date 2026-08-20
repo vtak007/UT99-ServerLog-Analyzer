@@ -71,6 +71,16 @@ $Config = @{
         'DarkFortress'
     )
 
+    # Topic fragments (case-insensitive regex) whose findings are suppressed from the
+    # "## Findings" section only - same filter as SuppressedFindingsMaps above, but matched on
+    # subject matter rather than map name. 'skin' covers every skin package and texture-variant
+    # message (CommandoSkins, FCommandoSkins, SGirlSkins, SoldierSkins, TSkMSkins, ...): these are
+    # client-side cosmetics the server can't and shouldn't fix, so they don't warrant a finding.
+    # They still appear in Failed-to-Load Offenders and, if the model raises them, Recommendations.
+    SuppressedFindingsPatterns = @(
+        'skin'
+    )
+
     # --- Reports -------------------------------------------------------------
     # If $true, opens the report when the script finishes a non-scheduled run.
     # Has no effect when run by Task Scheduler.

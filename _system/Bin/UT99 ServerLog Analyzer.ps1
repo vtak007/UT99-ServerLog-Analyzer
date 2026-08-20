@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     UT99 ServerLog Analyzer - downloads the FMJ server's rotated log
     (server-old.log) via WinSCP, analyzes it with Claude, and writes a
@@ -733,6 +733,48 @@ function Format-MdCell { param([string]$Text)
     return ($Text -replace '\r?\n', ' ' -replace '\|', '¦').Trim()
 }
 
+# Builds a markdown table whose raw source is column-aligned: every cell (header, separator and
+# body) is padded to the widest entry in its column, so the .md reads as a table in a plain-text
+# view (VS Code raw, git diff) and not only through a markdown renderer.
+#   -Headers  column titles
+#   -Aligns   one of 'L' / 'R' per column ('R' right-pads the separator with ':' => right-aligned)
+#   -Rows     array of row arrays; cells are strings, already passed through Format-MdCell
+# Returns the finished block, one line per row, each terminated by `n.
+function Format-MdTable { param(
+        [Parameter(Mandatory)] [string[]] $Headers,
+        [Parameter(Mandatory)] [string[]] $Aligns,
+        [AllowEmptyCollection()] [array] $Rows
+    )
+    $nl = "`n"
+    # A row-building foreach that emits exactly ONE ,@(...) row arrives here already unrolled, as a
+    # flat string[] of that row's cells rather than an array containing one row array. Without this
+    # guard a single-row table renders one row per cell, split character by character.
+    if ($Rows.Count -gt 0 -and $Rows[0] -isnot [System.Array]) { $Rows = @(,$Rows) }
+    $widths = for ($i = 0; $i -lt $Headers.Count; $i++) {
+        # Floor of 3: a markdown separator needs at least '---', so a narrower column would
+        # leave the separator wider than the cells and break the rectangle.
+        $max = [Math]::Max(3, $Headers[$i].Length)
+        foreach ($r in $Rows) { if ([string]$r[$i] -and ([string]$r[$i]).Length -gt $max) { $max = ([string]$r[$i]).Length } }
+        $max
+    }
+    $pad = { param($text, $width, $align) $t = [string]$text; if ($align -eq 'R') { $t.PadLeft($width) } else { $t.PadRight($width) } }
+    $out = New-Object System.Text.StringBuilder
+    $headerCells = for ($i = 0; $i -lt $Headers.Count; $i++) { & $pad $Headers[$i] $widths[$i] $Aligns[$i] }
+    $null = $out.Append('| ' + ($headerCells -join ' | ') + ' |' + $nl)
+    # Separator cells are padded exactly like the data cells (same '| ' ... ' |' framing), so the
+    # whole block is rectangular in raw view instead of the separator line stopping short.
+    $sepCells = for ($i = 0; $i -lt $Headers.Count; $i++) {
+        $dashes = '-' * $widths[$i]
+        if ($Aligns[$i] -eq 'R') { $dashes.Substring(0, $dashes.Length - 1) + ':' } else { $dashes }
+    }
+    $null = $out.Append('| ' + ($sepCells -join ' | ') + ' |' + $nl)
+    foreach ($r in $Rows) {
+        $cells = for ($i = 0; $i -lt $Headers.Count; $i++) { & $pad $r[$i] $widths[$i] $Aligns[$i] }
+        $null = $out.Append('| ' + ($cells -join ' | ') + ' |' + $nl)
+    }
+    return $out.ToString()
+}
+
 function New-ServerLogReport {
     param(
         [Parameter(Mandatory)] $Analysis,
@@ -775,14 +817,10 @@ function New-ServerLogReport {
 
     $null = $sb.Append('# FMJ Server Log Analysis — ' + $ReportDate.ToString('dddd, dd MMMM yyyy') + $A+$A)
 
-    # --- Log coverage window (first/last timestamped entry in the log) ---
-    if ($Digest.FirstEntry -and $Digest.LastEntry) {
-        $null = $sb.Append('**Log covers:** ' + $Digest.FirstEntry.ToString('ddd dd MMM yyyy HH:mm:ss') +
-                           '  →  ' + $Digest.LastEntry.ToString('ddd dd MMM yyyy HH:mm:ss') +
-                           '   (' + $Digest.SpanText + ')' + $A+$A)
-    } else {
-        $null = $sb.Append('**Log covers:** _no timestamped entries found_' + $A+$A)
-    }
+    # No '**Log covers:**' line here: the coverage window is already carried by the
+    # log_first_entry / log_last_entry frontmatter and by the First/Last/Log covers rows in the
+    # Health Dashboard below, so a third copy under the H1 was redundant. FirstEntry/LastEntry/
+    # SpanText are still collected and still rendered in those two places.
 
     # --- Executive summary callout ---
     $statusCallout = switch ($status) {
@@ -802,23 +840,26 @@ function New-ServerLogReport {
     $td = if ($Trend -and $Trend.HasHistory) { $Trend.Deltas } else { $null }
     $vsLabel = if ($td) { ' (Δ vs ' + $Trend.PrevDate + ')' } else { '' }
     $null = $sb.Append('## Health Dashboard'+$A+$A)
-    $null = $sb.Append('| Metric | Value' + $vsLabel + ' |'+$A+'|---|---|'+$A)
-    # No 'Log session closed' row: rotated logs carry no 'Log file closed' marker, so it was
-    # always blank. First/Last log entry below is the real coverage window.
-    $null = $sb.Append('| Log session opened | ' + (Format-MdCell $Digest.LogOpen) + ' |'+$A)
-    $null = $sb.Append('| First log entry | ' + (Format-MdCell $Digest.FirstEntryText) + ' |'+$A)
-    $null = $sb.Append('| Last log entry | ' + (Format-MdCell $Digest.LastEntryText) + ' |'+$A)
-    $null = $sb.Append('| Log covers | ' + (Format-MdCell $Digest.SpanText) + ' |'+$A)
-    $null = $sb.Append('| Log lines | ' + $Digest.LineCount + ' |'+$A)
-    $null = $sb.Append('| Maps played | ' + $Digest.Maps.Count + ' |'+$A)
-    $null = $sb.Append('| Connection attempts (open / close) | ' + $n.Opens + ' / ' + $n.Closes + ' |'+$A)
-    $null = $sb.Append('| Player connects (incl. map reloads) | ' + $n.PlayerSessions + (& $deltaTag ($td ? $td.PlayerSessions : $null)) + ' |'+$A)
-    $null = $sb.Append('| Unique players | ' + $n.UniquePlayers + ' |'+$A)
-    $null = $sb.Append('| Peak concurrent players | ' + $n.PeakConcurrent + ' |'+$A)
-    $null = $sb.Append('| Unique client IPs | ' + $n.UniqueIPs + (& $deltaTag ($td ? $td.UniqueIPs : $null)) + ' |'+$A)
-    $null = $sb.Append('| Hard errors | ' + ([int]$Digest.ErrorTotal) + (& $deltaTag ($td ? $td.Errors : $null)) + ' |'+$A)
-    $null = $sb.Append('| Warnings | ' + ([int]$Digest.WarningTotal) + (& $deltaTag ($td ? $td.Warnings : $null)) + ' |'+$A)
-    $null = $sb.Append('| Script warnings (Accessed None etc.) | ' + ([int]$Digest.SWTotal) + (& $deltaTag ($td ? $td.ScriptWarnings : $null)) + ' |'+$A)
+    # Coverage rows: only the duration is rendered here. The endpoints live in the
+    # log_first_entry / log_last_entry frontmatter instead - 'Log session opened' was always the
+    # same instant as the first entry (just a different format), so all three were one fact shown
+    # three ways. LogOpen / FirstEntryText / LastEntryText are still collected and still feed the
+    # frontmatter; only the dashboard rows are gone. ('Log session closed' was dropped earlier for
+    # a different reason: rotated logs carry no 'Log file closed' marker, so it was always blank.)
+    $dashRows = @(
+        ,@('Log covers',                            (Format-MdCell $Digest.SpanText))
+        ,@('Log lines',                             [string]$Digest.LineCount)
+        ,@('Maps played',                           [string]$Digest.Maps.Count)
+        ,@('Connection attempts (open / close)',    ('' + $n.Opens + ' / ' + $n.Closes))
+        ,@('Player connects (incl. map reloads)',   ('' + $n.PlayerSessions + (& $deltaTag ($td ? $td.PlayerSessions : $null))))
+        ,@('Unique players',                        [string]$n.UniquePlayers)
+        ,@('Peak concurrent players',               [string]$n.PeakConcurrent)
+        ,@('Unique client IPs',                     ('' + $n.UniqueIPs + (& $deltaTag ($td ? $td.UniqueIPs : $null))))
+        ,@('Hard errors',                           ('' + ([int]$Digest.ErrorTotal) + (& $deltaTag ($td ? $td.Errors : $null))))
+        ,@('Warnings',                              ('' + ([int]$Digest.WarningTotal) + (& $deltaTag ($td ? $td.Warnings : $null))))
+        ,@('Script warnings (Accessed None etc.)',  ('' + ([int]$Digest.SWTotal) + (& $deltaTag ($td ? $td.ScriptWarnings : $null))))
+    )
+    $null = $sb.Append((Format-MdTable -Headers @('Metric', ('Value' + $vsLabel)) -Aligns @('L','L') -Rows $dashRows))
     $null = $sb.Append($A)
 
     # --- Changes since last run (Feature 1) ---
@@ -845,9 +886,14 @@ function New-ServerLogReport {
     # --- Findings ---
     $null = $sb.Append('## Findings'+$A+$A)
     $findings = @($Analysis.findings)
-    $suppressedMapPatterns = @($Config.SuppressedFindingsMaps)
-    if ($suppressedMapPatterns.Count -gt 0) {
-        $suppressPattern = ($suppressedMapPatterns) -join '|'
+    # Two suppression lists, applied identically and only here (Recommendations is untouched):
+    # chronic maps, and topic fragments such as client-side skins. There is no structured per-
+    # finding map/topic field, so matching is done on the finding's raw text; -notmatch is
+    # case-insensitive.
+    $suppressFragments = @(@($Config.SuppressedFindingsMaps) + @($Config.SuppressedFindingsPatterns)) |
+        Where-Object { $_ }
+    if ($suppressFragments.Count -gt 0) {
+        $suppressPattern = ($suppressFragments) -join '|'
         $findings = @($findings | Where-Object {
             $text = "$($_.title) $($_.evidence) $($_.root_cause) $($_.solution)"
             $text -notmatch $suppressPattern
@@ -896,20 +942,7 @@ function New-ServerLogReport {
             $first = if ($p.First) { ([datetime]$p.First).ToString('HH:mm') } else { '' }
             ,@((Format-MdCell $p.Name), [string]$p.Joins, (& $fmtDur $p.AvgSec), (& $fmtDur $p.TotalSec), [string]$p.IPs, $first)
         }
-        $colWidths = for ($i = 0; $i -lt $colHeaders.Count; $i++) {
-            $max = $colHeaders[$i].Length
-            foreach ($r in $rows) { if ($r[$i].Length -gt $max) { $max = $r[$i].Length } }
-            $max
-        }
-        $padCell = { param($text, $width, $align) if ($align -eq 'R') { $text.PadLeft($width) } else { $text.PadRight($width) } }
-        $headerCells = for ($i = 0; $i -lt $colHeaders.Count; $i++) { & $padCell $colHeaders[$i] $colWidths[$i] $colAligns[$i] }
-        $null = $sb.Append('| ' + ($headerCells -join ' | ') + ' |'+$A)
-        $sepCells = for ($i = 0; $i -lt $colHeaders.Count; $i++) { $dashes = '-' * [Math]::Max($colWidths[$i], 3); if ($colAligns[$i] -eq 'R') { $dashes.Substring(0, $dashes.Length - 1) + ':' } else { $dashes } }
-        $null = $sb.Append('|' + ($sepCells -join '|') + '|'+$A)
-        foreach ($r in $rows) {
-            $cells = for ($i = 0; $i -lt $r.Count; $i++) { & $padCell $r[$i] $colWidths[$i] $colAligns[$i] }
-            $null = $sb.Append('| ' + ($cells -join ' | ') + ' |'+$A)
-        }
+        $null = $sb.Append((Format-MdTable -Headers $colHeaders -Aligns $colAligns -Rows @($rows)))
         $null = $sb.Append($A)
         # Real churn = many connects with consistently SHORT stays (rapid connect/drop),
         # not just a high connect count (that is normal map-travel over a long session).
@@ -925,10 +958,10 @@ function New-ServerLogReport {
     $null = $sb.Append('## Issues by Map'+$A+$A)
     $mi = @($Digest.MapIssues)
     if ($mi.Count -gt 0) {
-        $null = $sb.Append('| Map | Warnings | Script warnings | Errors |'+$A+'|---|--:|--:|--:|'+$A)
-        foreach ($m in $mi) {
-            $null = $sb.Append('| ' + (Format-MdCell $m.Map) + ' | ' + $m.Warnings + ' | ' + $m.ScriptWarnings + ' | ' + $m.Errors + ' |'+$A)
+        $miRows = foreach ($m in $mi) {
+            ,@((Format-MdCell $m.Map), [string]$m.Warnings, [string]$m.ScriptWarnings, [string]$m.Errors)
         }
+        $null = $sb.Append((Format-MdTable -Headers @('Map','Warnings','Script warnings','Errors') -Aligns @('L','R','R','R') -Rows @($miRows)))
         $null = $sb.Append($A + '_Attribution is by the map active when each line was logged; `(startup)` covers engine/package load before the first map._'+$A+$A)
     } else {
         $null = $sb.Append('_No map-attributable issues._'+$A+$A)
@@ -937,42 +970,53 @@ function New-ServerLogReport {
     $null = $sb.Append('## Anti-Cheat / Integrity'+$A+$A)
     $null = $sb.Append('> [!info] ' + (Format-MdCell ([string]$Analysis.anticheat_assessment)) + $A+$A)
     if (@($Digest.AntiCheat).Count -gt 0) {
-        $null = $sb.Append('| Count | Signature |'+$A+'|--:|---|'+$A)
-        foreach ($s in $Digest.AntiCheat) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
+        $sigRows = foreach ($s in $Digest.AntiCheat) { ,@([string]$s.Count, (Format-MdCell $s.Signature)) }
+        $null = $sb.Append((Format-MdTable -Headers @('Count','Signature') -Aligns @('R','L') -Rows @($sigRows)))
         $null = $sb.Append($A)
     } else {
         $null = $sb.Append('_No anti-cheat/integrity anomalies detected in the digest._'+$A+$A)
     }
 
-    # --- Session & config overview ---
-    $null = $sb.Append('## Session & Config Overview'+$A+$A)
-    $null = $sb.Append('- **Engine:** ' + $Digest.EngineVersion + $A)
-    $null = $sb.Append('- **Base directory:** `' + $Digest.BaseDir + '`'+$A)
-    $null = $sb.Append('- **Maps played (' + $Digest.Maps.Count + '):** ' + (($Digest.Maps | ForEach-Object { '`' + $_ + '`' }) -join ', ') + $A)
-    $null = $sb.Append('- **Mutators:** ' + (($Digest.Mutators | ForEach-Object { '`' + $_ + '`' }) -join ', ') + $A)
-    $null = $sb.Append('- **Server packages:** ' + (($Digest.ServerPackages | ForEach-Object { '`' + $_ + '`' }) -join ', ') + $A+$A)
+    # No '## Session & Config Overview' section: engine, base directory, mutators and the ~80-entry
+    # ServerPackages list are static server config that barely changes between sessions, and the
+    # packages line alone ran longer than most of the report. Engine still appears in the
+    # frontmatter, map count in the dashboard, and the per-map breakdown in Issues by Map. All of
+    # these fields are still collected and still sent to the API (see ConvertTo-DigestText), so the
+    # model keeps its config context - only the rendered section is gone.
 
     # --- Recurring script warnings ---
     $null = $sb.Append('## Recurring Script Warnings'+$A+$A)
     if (@($Digest.ScriptWarnings).Count -gt 0) {
-        $null = $sb.Append('| Count | Signature |'+$A+'|--:|---|'+$A)
-        foreach ($s in $Digest.ScriptWarnings) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
+        $sigRows = foreach ($s in $Digest.ScriptWarnings) { ,@([string]$s.Count, (Format-MdCell $s.Signature)) }
+        $null = $sb.Append((Format-MdTable -Headers @('Count','Signature') -Aligns @('R','L') -Rows @($sigRows)))
         $null = $sb.Append($A)
     } else { $null = $sb.Append('_None._'+$A+$A) }
 
     # --- Recurring warnings ---
     $null = $sb.Append('## Recurring Warnings'+$A+$A)
-    if (@($Digest.Warnings).Count -gt 0) {
-        $null = $sb.Append('| Count | Signature |'+$A+'|--:|---|'+$A)
-        foreach ($s in $Digest.Warnings) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
+    # 'Failed to load' warnings are rendered ONLY by the Failed-to-Load Offenders section below,
+    # which lists the same events with their real package/texture names instead of the digest's
+    # <x>/<n> placeholders. Listing both meant counting each of those warnings twice, in a worse
+    # form first. This is a render-time filter only: Digest.Warnings still holds them, so the API
+    # digest and the trend/NEW-signature diffing are unaffected.
+    $warnRows = @(@($Digest.Warnings) | Where-Object { $_.Signature -notmatch '^Failed to load' })
+    $warnHidden = @($Digest.Warnings).Count - $warnRows.Count
+    if ($warnRows.Count -gt 0) {
+        $sigRows = foreach ($s in $warnRows) { ,@([string]$s.Count, (Format-MdCell $s.Signature)) }
+        $null = $sb.Append((Format-MdTable -Headers @('Count','Signature') -Aligns @('R','L') -Rows @($sigRows)))
         $null = $sb.Append($A)
+        if ($warnHidden -gt 0) {
+            $null = $sb.Append('_' + $warnHidden + ' further `Failed to load` signature(s) are listed with their real names in **Failed-to-Load Offenders** below._'+$A+$A)
+        }
+    } elseif ($warnHidden -gt 0) {
+        $null = $sb.Append('_All ' + $warnHidden + ' recurring warning signature(s) this session were `Failed to load` lines - see **Failed-to-Load Offenders** below._'+$A+$A)
     } else { $null = $sb.Append('_None._'+$A+$A) }
 
     # --- Failed-to-load offenders (verbatim names, all of them) ---
     $null = $sb.Append('## Failed-to-Load Offenders'+$A+$A)
     if (@($Digest.FailedLoads).Count -gt 0) {
-        $null = $sb.Append('| Count | Message |'+$A+'|--:|---|'+$A)
-        foreach ($s in $Digest.FailedLoads) { $null = $sb.Append('| ' + $s.Count + ' | ' + (Format-MdCell $s.Signature) + ' |'+$A) }
+        $sigRows = foreach ($s in $Digest.FailedLoads) { ,@([string]$s.Count, (Format-MdCell $s.Signature)) }
+        $null = $sb.Append((Format-MdTable -Headers @('Count','Message') -Aligns @('R','L') -Rows @($sigRows)))
         $null = $sb.Append($A)
     } else { $null = $sb.Append('_None._'+$A+$A) }
 

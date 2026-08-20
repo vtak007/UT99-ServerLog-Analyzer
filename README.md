@@ -20,23 +20,30 @@ Each run writes two files to `D:\Dropbox\Gaming\UTLogs\ServerLogs`:
 
 The report contains:
 
-- **YAML frontmatter** (status, engine, date, first/last log entry, tags) for Obsidian.
-- **Log coverage line** at the top — the first and last timestamped entry in the log and the
-  elapsed span (e.g. `Sat 08 Aug 2026 04:35:19 → Sun 09 Aug 2026 01:19:55 (21h 44m)`).
+- **YAML frontmatter** (status, engine, date, first/last log entry, tags) for Obsidian. The
+  coverage window's endpoints live here — `log_first_entry` / `log_last_entry` — and only the
+  elapsed span is repeated in the dashboard.
 - **Executive summary** and an overall status callout (Healthy / Minor Issues / Needs Attention / Critical).
-- **Health Dashboard** with day-over-day deltas.
+- **Health Dashboard** with day-over-day deltas, opening with a `Log covers` span row.
 - **Changes Since Last Run** — brand-new and resolved issue signatures.
 - **Findings** — severity-ranked (`Critical`/`High`/`Medium`/`Low`), each with evidence,
-  root cause, and a proposed solution, using Obsidian callouts. Findings about maps listed in
-  `SuppressedFindingsMaps` (chronic, already-known map-authoring issues) are dropped from this
-  section — they can still surface in Recommendations.
+  root cause, and a proposed solution, using Obsidian callouts. Two config lists drop findings
+  from this section (and this section only — they can still surface in Recommendations):
+  `SuppressedFindingsMaps` for chronic, already-known map-authoring issues, and
+  `SuppressedFindingsPatterns` for whole topics, currently client-side skins.
 - **Players & Connections** — per-player connects, session times, peak concurrent players, churn detection.
 - **Issues by Map** — warnings/script-warnings/errors attributed to the map that caused them.
-- **Anti-Cheat / Integrity**, **Session & Config Overview**, recurring-signature tables.
+- **Anti-Cheat / Integrity** and the recurring-signature tables. `Failed to load` signatures are
+  deliberately absent from Recurring Warnings — they belong to Failed-to-Load Offenders below,
+  which shows the same events with real names instead of `<x>` placeholders; a pointer line says
+  how many were moved.
 - **Failed-to-Load Offenders** — every distinct `Failed to load "…"` message with its real
   package/object name kept verbatim (not bucketed to `<x>`) and an occurrence count, all
   offenders listed (uncapped). Surfaces exactly which packages/files the server is missing.
 - **Recommendations** checklist and a collapsible raw-tally appendix.
+
+Every table is written column-aligned in the raw markdown — cells padded to a per-column width —
+so the `.md` reads as a table in a plain-text view, not only through a renderer.
 
 ---
 
