@@ -22,6 +22,17 @@ See `CLAUDE.md` for project-specific details.
   Use **Total time** / **peak concurrent** / **unique players** as the true population measures,
   not raw connect counts.
 
+- **Single-row markdown tables rendered character-by-character (`Format-MdTable`, found
+  2026-08-20).** A row-building `foreach` that emits exactly ONE `,@(...)` row arrives at the
+  table function already unrolled — as a flat array of that row's *cells*, not an array containing
+  one row array — so each cell was treated as a row and split per character (`| 1 | 4 |` /
+  `| U | L |` instead of `| 14 | ULevel::MultiLineCheck ... |`). Guard added:
+  `if ($Rows.Count -gt 0 -and $Rows[0] -isnot [System.Array]) { $Rows = @(,$Rows) }`. This was
+  latent in EVERY table since the padding work of 2026-08-18, including Players & Connections —
+  any session with a single player, a single map, or a single signature would have hit it. None
+  of the 11 archived reports happened to contain a one-row table, which is why it stayed hidden
+  until `Failed to load` rows were filtered out of Recurring Warnings and left exactly one row.
+
 ## RULED-OUT THEORIES
 
 - **Finding #1 `DM-FortressOfNalitude` NaN vectors in `MultiLineCheck` (28×) — dismissed/monitor.**
@@ -89,6 +100,25 @@ See `CLAUDE.md` for project-specific details.
   flag is a no-op. Skin packages `CommandoSkins`/`FCommandoSkins`/`SGirlSkins`/`SoldierSkins` ARE in
   `ServerPackages` (so finding #9 = missing texture *variants* within shipped packages, a version
   mismatch, not a missing package). `tskmskins` and `ELD_TauntPack002` are NOT in ServerPackages.
+- **Report duplication pass (2026-08-20) — what was removed vs deliberately KEPT.** A full
+  audit of the 08-19 report found ~22% of its lines restating information carried elsewhere.
+  Removed: the `**Log covers:**` line under the H1; the `Log session opened` / `First log entry` /
+  `Last log entry` dashboard rows (endpoints now live only in frontmatter, dashboard keeps the
+  `Log covers` span); the whole `## Session & Config Overview` section; `Failed to load`
+  signatures in `## Recurring Warnings` (Failed-to-Load Offenders shows the same events with real
+  names). **Explicitly kept by user decision — do NOT re-propose these:** (a) the Players &
+  Connections bullets that restate Health Dashboard rows, (b) findings evidence that restates the
+  recurring-signature tables, (c) Recommendations that condense each finding's proposed solution.
+  The Anti-Cheat section's doubled "nothing was logged" (AI callout + static line) was offered and
+  not taken up.
+- **Skin findings are suppressed from `## Findings` (`Config.SuppressedFindingsPatterns`).** Added
+  2026-08-20: a topic-based sibling of `SuppressedFindingsMaps`, matched the same way (both lists
+  unioned into one case-insensitive regex over title/evidence/root_cause/solution) and applied to
+  the Findings section only. Currently just `skin`, which reaches every skin package and
+  texture-variant message. Rationale is the long-standing one in RULED-OUT THEORIES: client-brought
+  cosmetic packages are not server problems. They still show in Failed-to-Load Offenders (with real
+  names) and may still appear in Recommendations. Fragment is deliberately broad — a finding that
+  merely mentions skins in its evidence is also dropped; user accepted that trade-off.
 - WinSCP saved session name is `FMJ FTP Server` (shared with UT99 ChatLog Analyzer).
 - **Remote log rotation changed 2026-08-09:** it is no longer the fixed `/System/server-old.log`.
   Each server start rotates the previous log to **`/Logs/server.yyyymmdd_hhmm.log`** and old ones
@@ -142,6 +172,28 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-08-20 — Report duplication pass. Removed the `**Log covers:**` H1 line, the three coverage
+  rows from the Health Dashboard, the entire `## Session & Config Overview` section, and the
+  `Failed to load` rows from `## Recurring Warnings` (replaced by a pointer line to Failed-to-Load
+  Offenders). All four applied to the generator AND retro-applied to the 2026-08-19 report only
+  (200 → 167 lines); earlier reports left untouched. Groups 2/4/5 of the audit (dashboard↔bullets,
+  findings↔tables, recommendations↔solutions) were reviewed and deliberately kept. Audit was done
+  against a published annotated artifact of the 08-19 report.
+- 2026-08-20 — Added `Config.SuppressedFindingsPatterns` (`'skin'`): skin-related findings are now
+  dropped from `## Findings`, using the same filter as `SuppressedFindingsMaps` (the two lists are
+  unioned). Verified by a synthetic-findings unit test plus a live API run over
+  `server.20260820_0325.log` — 3 findings, none skin-related, where the shipped 08-19 report had
+  two. Also removed the two existing skin findings (#4, #5) from the 08-19 report.
+- 2026-08-20 — Fixed `Format-MdTable` rendering a single-row table character-by-character (see
+  CONFIRMED ROOT CAUSES). Latent in all tables since 2026-08-18.
+- 2026-08-20 — All report tables now render column-aligned in the raw markdown. Extracted the
+  padding logic that was inline in the Players & Connections builder into a shared
+  `Format-MdTable` (headers / `L`-`R` aligns / rows) and routed all seven tables through it:
+  Health Dashboard, Players & Connections, Issues by Map, Anti-Cheat, Recurring Script Warnings,
+  Recurring Warnings, Failed-to-Load Offenders. Separator rows are now padded to full width too
+  (previously 2 chars short per column). Re-padded all 11 existing reports in place with a
+  throwaway script rather than regenerating (only 08-17+ still have raw logs, and a regen would
+  re-run the AI); verified normalized-diff-identical apart from padding, and idempotent on re-run.
 - 2026-08-18 — Added `Config.SuppressedFindingsMaps`: findings mentioning CyberSpace,
   Temple0fTheWinds, CodexEvolved, AncientPhobos, or DarkFortress are now filtered out of
   `## Findings` in `New-ServerLogReport` (Recommendations unaffected). Verified by regenerating

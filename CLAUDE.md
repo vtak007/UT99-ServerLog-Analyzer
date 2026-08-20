@@ -47,6 +47,11 @@ morning run over the previous night's rotated log is named for the session it co
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
   `Log file closed` marker, so `Digest.LogClosed` is normally empty — it is still collected but
   no longer rendered (the dashboard row was dropped); use First/Last as the coverage window.
+  The **endpoints are rendered once**, in the `log_first_entry`/`log_last_entry` frontmatter; the
+  dashboard shows only the `Log covers` span. The old `**Log covers:**` line under the H1 and the
+  `Log session opened`/`First log entry`/`Last log entry` dashboard rows were removed (2026-08-20)
+  — `Log session opened` was always the same instant as the first entry, just formatted
+  differently. `LogOpen`/`FirstEntryText`/`LastEntryText` are still collected and feed frontmatter.
 - **Bounded digest:** `Get-ServerLogDigest` deduplicates issue lines into signatures with
   counts (top-N per bucket via `MaxSignaturesPerBucket`). Only the digest — never the raw
   11k+ lines — is sent to the API, so token cost stays flat regardless of log size.
@@ -55,16 +60,37 @@ morning run over the previous night's rotated log is named for the session it co
   package/version. Plus a tag histogram and network counters (opens/closes/unique IPs/timeouts).
 - `DeleteAfterDownload` is `$false` — never delete the server's own rotated logs.
 - Player IPs (PII) are counted, not sent verbatim to the API.
-- **Findings suppression by map (`Config.SuppressedFindingsMaps`):** in `New-ServerLogReport`,
-  before rendering `## Findings`, any finding whose title/evidence/root_cause/solution text
-  matches one of the (case-insensitive, regex) map-name fragments in config is dropped from that
+- **Findings suppression (`Config.SuppressedFindingsMaps` + `Config.SuppressedFindingsPatterns`):**
+  in `New-ServerLogReport`, before rendering `## Findings`, the two lists are unioned into one
+  regex and any finding whose title/evidence/root_cause/solution text matches is dropped from that
   section only — `## Recommendations` is untouched, since the AI is still free to mention those
   maps there. Matching is done against the raw text (there's no structured per-finding map
   field), so fragments must tolerate the exact spelling variants seen in logs, e.g.
   `Temple[0O]fThe[wW]inds` for `DM-Temple0fTheWinds` (note the digit `0`, not letter `O`).
-- **Markdown table rendering (`Format-MdCell` + the Players & Connections table builder):**
-  cells are padded to a per-column max width so the raw `.md` source is visually column-aligned
-  even without a markdown previewer (VS Code raw view, etc.), not just when rendered. A literal
+  `SuppressedFindingsPatterns` is the same mechanism matched on subject rather than map name;
+  it currently holds `skin`, which covers every skin package and texture-variant message
+  (CommandoSkins, SGirlSkins, SoldierSkins, TSkMSkins, …) — client-side cosmetics the server
+  can't fix. They remain visible in Failed-to-Load Offenders and may still appear in
+  Recommendations.
+- **Sections deliberately removed from the report (2026-08-20 duplication pass):**
+  `## Session & Config Overview` (engine/base dir/maps/mutators/~80-entry ServerPackages list) is
+  gone — static config that barely changes between sessions, and the packages line alone ran
+  longer than most of the report. Those fields are **still collected and still sent to the API**
+  via `ConvertTo-DigestText`, so the model keeps its config context. Likewise `Failed to load`
+  signatures are filtered out of `## Recurring Warnings` at render time (a pointer line replaces
+  them) because Failed-to-Load Offenders lists the same events with real names — `Digest.Warnings`
+  is untouched, so the API digest and NEW/resolved-signature diffing still see them.
+  **Kept on purpose:** the Players & Connections bullets that restate Health Dashboard rows, the
+  findings evidence that restates the recurring tables, and the Recommendations that condense each
+  finding's proposed solution — all reviewed 2026-08-20 and deliberately left as-is.
+- **Markdown table rendering (`Format-MdCell` + `Format-MdTable`):** every table in the report
+  goes through `Format-MdTable` (headers, per-column `L`/`R` aligns, rows); cells — including the
+  separator row — are padded to a per-column max width, floored at 3, so the raw `.md` source is
+  visually column-aligned even without a markdown previewer (VS Code raw view, etc.), not just
+  when rendered. **GOTCHA:** a row-building `foreach` that emits exactly ONE `,@(...)` row arrives
+  at the function already unrolled, as a flat array of that row's *cells*; `Format-MdTable` detects
+  this (`$Rows[0] -isnot [System.Array]`) and re-wraps it. Without that guard a single-row table
+  renders one row per cell, split character by character. A literal
   `|` in a player name is replaced with the look-alike `¦` (not backslash-escaped `\|`) because
   some renderers (Obsidian) don't reliably honor `\|` escaping inside table cells and will still
   split the column on it — `¦` can never be mistaken for a column separator, in source or render.
