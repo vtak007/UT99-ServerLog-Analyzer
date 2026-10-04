@@ -5,6 +5,16 @@ See `CLAUDE.md` for project-specific details.
 
 ## CONFIRMED ROOT CAUSES
 
+- **Reports lagging the current date (found 2026-10-04).** The analyzer read only
+  `/Logs/server.*.log` (rotated files), and NFO's script stopped producing them after
+  `server.20261001_1748.log`, so every run re-analyzed the 10-01 log (the 10-03 run rewrote the
+  `2026-10-01` report). Separately, the 10-04 04:25 run failed outright: the saved WinSCP session
+  `FMJ FTP Server` had lost its stored password ("Access denied. Credentials were not specified.");
+  re-saving it in WinSCP fixed that. UT99's own `/System/server-old.log` / `server.log` pair is
+  now complete again (server-old: 10/03 17:45 -> 10/04 07:00; live: from 07:00), which fits the
+  469e -> 469f update, but only one clean rotation has been seen so that is **unconfirmed**.
+  **Fix:** fetch `/System/server-old.log`, archive by session-open time (see PROJECT CONVENTIONS).
+
 - **05:00 scheduled-run collision with a system reboot (2026-08-05).** The daily download
   failed to produce a log: the run stopped right after logging "Fetching…", no `winscp-*.xml`
   was written, task result `0x41306` (SCHED_S_TASK_TERMINATED), action return code `0x800705AB`
@@ -35,6 +45,9 @@ See `CLAUDE.md` for project-specific details.
 
 ## RULED-OUT THEORIES
 
+- **"The live `/Logs/server.log` is already being fetched" (2026-10-04) — false.** The mask
+  `server.*.log` only matches rotated files; the live/previous logs are in `/System/`. The WinSCP
+  password loss explained only the 10-04 failure, not the multi-day lag.
 - **Finding #1 `DM-FortressOfNalitude` NaN vectors in `MultiLineCheck` (28×) — dismissed/monitor.**
   Rated HIGH by the AI, but `try trace for NaN vector` is the engine's **guard firing** (it detects
   and rejects the degenerate trace), so real-world impact is ~one skipped collision trace per hit, not
@@ -120,7 +133,7 @@ See `CLAUDE.md` for project-specific details.
   names) and may still appear in Recommendations. Fragment is deliberately broad — a finding that
   merely mentions skins in its evidence is also dropped; user accepted that trade-off.
 - WinSCP saved session name is `FMJ FTP Server` (shared with UT99 ChatLog Analyzer).
-- **Remote log rotation changed 2026-08-09:** it is no longer the fixed `/System/server-old.log`.
+- **SUPERSEDED 2026-10-04 (source is now `/System/server-old.log`, see CLAUDE.md Design notes) — kept for history. Remote log rotation changed 2026-08-09:** it is no longer the fixed `/System/server-old.log`.
   Each server start rotates the previous log to **`/Logs/server.yyyymmdd_hhmm.log`** and old ones
   **accumulate**. Config is now `RemoteLogFolder='/Logs/'` + `RemoteLogMask='server.*.log'` (the
   key `RemoteLogName` no longer exists); the fetch uses WinSCP **`get -latest`**. Newest is always
@@ -153,11 +166,12 @@ See `CLAUDE.md` for project-specific details.
 - Analysis is AI-assisted: a deterministic deduped **digest** (not raw lines) is sent to the
   Anthropic API (`claude-sonnet-4-6`); `ANTHROPIC_API_KEY` is a User env var.
 - Docs (`README.md`) are finalized only after a live end-to-end test + explicit approval.
-- Scheduled task runs daily at **04:25** (server boots 02:00–05:00, creating the log). Retry
-  is Task Scheduler restart-on-failure: 30-min interval × 3 (04:25/04:55/05:25/05:55).
+- Scheduled task runs daily at **07:30** (changed from 04:25 on 2026-10-04: NFO's restart now
+  lands ~07:00, and an earlier run gets the previous-previous session). Retry
+  is Task Scheduler restart-on-failure at a 30-min interval. The 04:25 grid existed to dodge 05:00.
   **Do NOT use 05:00** — the separate "Daily Restart" task force-reboots (`shutdown /r /f`) at
   05:00 every 3 days and kills the run (see CONFIRMED ROOT CAUSES). The 30-min retry grid must
-  also stay off 05:00, hence 04:25 (not 04:30, whose grid would hit 05:00).
+  also stay off 05:00 (07:30 and its retries clear it).
   `RunOnlyIfNetworkAvailable` is
   intentionally OFF so a no-network start still runs, fails fast (exit 1), and restarts — this
   covers both "log not created yet" and "no network" with one mechanism.
@@ -172,6 +186,12 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-10-04 — Source switched to `/System/server-old.log`: archived as `server.yyyymmdd_hhmm.log`
+  by "Log file open" time (never overwrites), legacy `/Logs/` fetch kept as fallback
+  (`Config.FetchSource`/`RemoteLogPath`), new `-ArchiveOnly` switch, default schedule 07:30
+  (user changed the registered task manually). Added `Capture Manual Restarts.md` (merge-sessions
+  idea, not implemented). Tested live: archive, idempotent re-run, full report `2026-10-03`.
+  Fallback path not live-tested. The 10-01 17:48 -> 10-03 17:45 sessions were never archived.
 - 2026-08-20 — Report duplication pass. Removed the `**Log covers:**` H1 line, the three coverage
   rows from the Health Dashboard, the entire `## Session & Config Overview` section, and the
   `Failed to load` rows from `## Recurring Warnings` (replaced by a pointer line to Failed-to-Load

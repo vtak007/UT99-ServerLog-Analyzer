@@ -15,6 +15,17 @@ $Config = @{
     WinSCPcomPath     = 'C:\Program Files (x86)\WinSCP\WinSCP.com'
 
     # --- Server side ---------------------------------------------------------
+    # Where to get the log. 'ServerOld' (default): download UT99's own
+    # RemoteLogPath (rotated at every restart) and archive it under its
+    # "Log file open" time; falls back to the legacy /Logs/ fetch below if that
+    # fails. 'RotatedLogs': legacy only (NFO's timestamped copies in /Logs/).
+    FetchSource       = 'ServerOld'
+
+    # UT99's previous-session log. Overwritten at every restart (manual or NFO),
+    # so run the analyzer with -ArchiveOnly after a manual restart.
+    RemoteLogPath     = '/System/server-old.log'
+
+    # Legacy source (FetchSource 'RotatedLogs', and the fallback):
     # Remote folder containing the rotated server logs (relative to the saved
     # session's home directory). Each server start rotates the previous log to
     # /Logs/server.yyyymmdd_hhmm.log, so these accumulate over time.

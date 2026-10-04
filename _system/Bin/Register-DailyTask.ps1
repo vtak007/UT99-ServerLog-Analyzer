@@ -10,8 +10,9 @@
     Pick a time AFTER the server's nightly log rotation produces server-old.log.
 
 .PARAMETER Time
-    Local time to run, in HH:mm 24-hour format. Default 05:00 (the FMJ server
-    normally boots between 02:00 and 05:00, creating the log).
+    Local time to run, in HH:mm 24-hour format. Default 07:30 (the FMJ server's
+    nightly restart currently lands at ~07:00, rotating server.log to
+    server-old.log; 07:30 also stays clear of the 05:00 'Daily Restart' reboot).
 
 .PARAMETER RetryIntervalMinutes
     If a run fails (the log doesn't exist yet because the server hasn't booted,
@@ -20,7 +21,7 @@
 
 .PARAMETER RetryCount
     How many times to restart after a failure before giving up until the next
-    day's trigger. Default 12 (so 05:00 + 12 x 30 min covers until ~11:00).
+    day's trigger. Default 12 (so 07:30 + 12 x 30 min covers until ~13:30).
 
 .PARAMETER StartDate
     Optional date (yyyy-MM-dd) on which the daily trigger begins. Defaults to today.
@@ -32,11 +33,11 @@
     Remove an existing task with this name.
 
 .EXAMPLE
-    .\Register-DailyTask.ps1 -Time 05:00
+    .\Register-DailyTask.ps1 -Time 07:30
 #>
 [CmdletBinding()]
 param(
-    [string] $Time                 = '05:00',
+    [string] $Time                 = '07:30',
     [int]    $RetryIntervalMinutes = 30,
     [int]    $RetryCount           = 12,
     [string] $StartDate            = '',

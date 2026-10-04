@@ -1,6 +1,6 @@
 # UT99 ServerLog Analyzer — Project Instructions
 
-Downloads the FMJ server's newest rotated log (`/Logs/server.yyyymmdd_hhmm.log`) via WinSCP, analyzes it with the
+Downloads the FMJ server's previous-session log (`/System/server-old.log`) via WinSCP, analyzes it with the
 Anthropic API, and writes a professional Obsidian markdown report. Modeled on the
 sibling **UT99 ChatLog Analyzer** project (same WinSCP-session + API patterns).
 
@@ -25,8 +25,8 @@ of the same task (per global doc-update gating: after tested + approved).
 
 ## Output locations (not in the project folder)
 
-- Downloaded raw log: `D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.yyyymmdd_hhmm.log`
-  (original server-side name, kept as-is — see Design notes below).
+- Archived raw log: `D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.yyyymmdd_hhmm.log`
+  (named from the log's own "Log file open" time — see Design notes below).
 - Report: `D:\Dropbox\Gaming\UTLogs\ServerLogs\FMJ Server Log Analysis <date>.md`
 
 Report/log date = the log's own "Log file open" session date (falls back to today), so a
@@ -34,14 +34,21 @@ morning run over the previous night's rotated log is named for the session it co
 
 ## Design notes
 
-- **Remote log is timestamped, not fixed-name:** each server start rotates the previous log to
-  `/Logs/server.yyyymmdd_hhmm.log` and old ones accumulate. Config exposes `RemoteLogFolder` +
-  `RemoteLogMask` (`server.*.log`); `Invoke-ServerFetch` uses WinSCP `get -latest` to download
-  straight into `RawLogFolder` (`ServerLogs\Raw Server Logs\`, config key `RawLogSubfolder`),
-  keeping the file's original server-side name — no rename, no staging folder. That folder is a
-  **permanent, never-wiped archive**: the newest-by-name match after each fetch is always the
-  file just downloaded, because the `yyyymmdd_hhmm` naming sorts lexicographically = chronologically
-  and WinSCP's `-latest` guarantees the newest remote file is always >= anything already archived.
+- **Source is `/System/server-old.log` (changed 2026-10-04):** UT99 rotates `server.log` to
+  `server-old.log` at every restart (manual or NFO's), **overwriting** the previous one. NFO's
+  timestamped `/Logs/server.*.log` copies (the 2026-08-09 source) stopped appearing after
+  2026-10-01 17:48, so the analyzer kept re-analyzing the same log. `Invoke-ServerOldFetch`
+  downloads it to `_system\State\staging`, reads the "Log file open" time via `Get-LogSessionDate`,
+  and moves it into `RawLogFolder` (`Raw Server Logs\`) as `server.yyyymmdd_hhmm.log`; an existing
+  archive file is never overwritten (WARN "already archived" on a normal run, INFO under
+  `-ArchiveOnly`). `Invoke-ServerFetch` dispatches on `Config.FetchSource` (`ServerOld` default;
+  `RotatedLogs` = legacy only) and falls back to `Invoke-RotatedLogFetch` (legacy `get -latest`
+  on `RemoteLogFolder`+`RemoteLogMask`) if the server-old fetch fails in a normal run. The raw
+  folder is a **permanent, never-wiped archive**. The schedule is **07:30** because NFO's
+  restart currently lands ~07:00; earlier runs get the session before the one that just ended.
+  **Manual-restart gap:** a second restart overwrites the first session's `server-old.log`, so
+  after a manual restart run `-ArchiveOnly` before NFO's restart. Merging several archived
+  sessions into one report is sketched in `Capture Manual Restarts.md` (not implemented).
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
