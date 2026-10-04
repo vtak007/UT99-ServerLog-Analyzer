@@ -29,6 +29,11 @@
     Skip the Claude API call. Produces a report from deterministic data only
     (no findings/solutions). Useful for testing parsing without API cost.
 
+.PARAMETER ArchiveOnly
+    Download /System/server-old.log and archive it under its "Log file open"
+    name, then exit - no digest, no API call, no report. Run this after a
+    manual server restart (before NFO's own restart overwrites server-old.log).
+
 .PARAMETER LogFile
     Analyze a specific local log file instead of the freshly downloaded one.
 
@@ -49,6 +54,7 @@ param(
     [string]   $ConfigPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'config.ps1'),
     [switch]   $NoFetch,
     [switch]   $NoAnalysis,
+    [switch]   $ArchiveOnly,
     [string]   $LogFile,
     [datetime] $Date
 )
@@ -98,15 +104,93 @@ Write-RunLog INFO "Log/report folder: $LogFolder"
 
 function Invoke-ServerFetch {
     <#
-        Downloads the single newest-rotated remote log directly into the raw
-        log archive (RawLogFolder), keeping its original server-side name.
-        Returns the local path of the resolved file, or $null if fetch was
-        skipped.
+        Dispatcher. FetchSource 'ServerOld' (default) archives /System/server-old.log,
+        falling back to the legacy /Logs/server.*.log fetch if that fails (not in
+        -ArchiveOnly mode). 'RotatedLogs' uses the legacy fetch only.
+        Returns the local archive path, or $null if fetch was skipped.
     #>
     if ($NoFetch) {
         Write-RunLog INFO "Skipping fetch (-NoFetch)."
         return $null
     }
+    if ($Config.FetchSource -ne 'RotatedLogs') {
+        try { return Invoke-ServerOldFetch }
+        catch {
+            if ($ArchiveOnly) { throw }
+            Write-RunLog WARN ("server-old.log fetch failed ({0}); falling back to {1}{2}." -f $_.Exception.Message, $Config.RemoteLogFolder, $Config.RemoteLogMask)
+        }
+    }
+    return Invoke-RotatedLogFetch
+}
+
+function Invoke-ServerOldFetch {
+    <#
+        UT99 rotates server.log -> server-old.log at every restart (manual or NFO),
+        overwriting the previous server-old.log. Download it to a staging folder,
+        read its "Log file open" time, and archive it as server.yyyymmdd_hhmm.log
+        in RawLogFolder (same naming as the older archive). Never overwrites an
+        existing archive file. Returns the archive path.
+    #>
+    if (-not (Test-Path $Config.WinSCPcomPath)) {
+        throw "WinSCP.com not found at $($Config.WinSCPcomPath). Install WinSCP 6.5+ or update WinSCPcomPath in config.ps1."
+    }
+    $remotePath = $Config.RemoteLogPath
+    $staging = Join-Path $StateFolder 'staging'
+    if (-not (Test-Path $staging)) { $null = New-Item -ItemType Directory -Force -Path $staging }
+    $staged = Join-Path $staging (($remotePath -split '/')[-1])
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+
+    $wscpLines = @(
+        'option batch abort'
+        'option confirm off'
+        'option transfer binary'
+        'option reconnecttime 30'
+        ('open "{0}"' -f $Config.WinSCPSessionName)
+        ('get "{0}" "{1}\"' -f $remotePath, $staging)
+        'exit'
+    )
+    $tempScript = Join-Path $env:TEMP ("ut99srvfetch-{0}.wscp" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+    $wscpXmlLog = Join-Path $StateFolder ("winscp-{0}.xml" -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'))
+    Set-Content -Path $tempScript -Value ($wscpLines -join "`r`n") -Encoding ASCII
+
+    Write-RunLog INFO ("Fetching {0} from server..." -f $remotePath)
+    $stdout = & $Config.WinSCPcomPath /script=$tempScript /xmllog=$wscpXmlLog /xmlgroups 2>&1 | Out-String
+    $exit = $LASTEXITCODE
+    Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
+
+    Add-Content -Path $RunLogFile -Value "----- WinSCP stdout -----"
+    Add-Content -Path $RunLogFile -Value $stdout
+    Add-Content -Path $RunLogFile -Value "----- end WinSCP stdout -----"
+
+    if ($exit -ne 0) {
+        Write-RunLog ERROR "WinSCP exit code $exit. See $wscpXmlLog and run log for details."
+        throw "WinSCP fetch of $remotePath failed (exit $exit)."
+    }
+    if (-not (Test-Path -LiteralPath $staged)) { throw "WinSCP reported success but $staged was not created." }
+
+    $opened = Get-LogSessionDate -Path $staged
+    if (-not $opened) { throw "No 'Log file open' timestamp found in $remotePath; cannot name the archive copy." }
+    $name = 'server.{0}.log' -f $opened.ToString('yyyyMMdd_HHmm')
+    $dest = Join-Path $RawLogFolder $name
+
+    if (Test-Path -LiteralPath $dest) {
+        $lvl = if ($ArchiveOnly) { 'INFO' } else { 'WARN' }
+        Write-RunLog $lvl ("{0} is already archived (session opened {1}) - no server restart since the last archive, so this run repeats that session." -f $name, $opened.ToString('yyyy-MM-dd HH:mm'))
+        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    } else {
+        Move-Item -LiteralPath $staged -Destination $dest
+        Write-RunLog INFO ("Archived new session log: {0} ({1:N0} bytes)" -f $name, (Get-Item -LiteralPath $dest).Length)
+    }
+    return $dest
+}
+
+function Invoke-RotatedLogFetch {
+    <#
+        Legacy fetch: downloads the single newest-rotated remote log directly into the raw
+        log archive (RawLogFolder), keeping its original server-side name.
+        Returns the local path of the resolved file, or $null if fetch was
+        skipped.
+    #>
     if (-not (Test-Path $Config.WinSCPcomPath)) {
         throw "WinSCP.com not found at $($Config.WinSCPcomPath). Install WinSCP 6.5+ or update WinSCPcomPath in config.ps1."
     }
@@ -1054,7 +1138,13 @@ function New-ServerLogReport {
 
 try {
     # 1. Fetch (unless -NoFetch), then decide which local log to analyze.
+    if ($ArchiveOnly -and $NoFetch) { throw "-ArchiveOnly cannot be combined with -NoFetch." }
     $fetched = Invoke-ServerFetch
+
+    if ($ArchiveOnly) {
+        Write-RunLog INFO ("Archive-only run complete: {0}" -f $fetched)
+        exit 0
+    }
 
     if ($LogFile) {
         if (-not (Test-Path $LogFile)) { throw "Specified -LogFile not found: $LogFile" }
