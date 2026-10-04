@@ -1,6 +1,6 @@
 # UT99 ServerLog Analyzer
 
-Automatically downloads the FMJ UT99 server's newest rotated log (`/Logs/server.<timestamp>.log`) via WinSCP,
+Automatically downloads the FMJ UT99 server's previous-session log (`/System/server-old.log`) via WinSCP,
 analyzes it for issues, anomalies, and problems using the Anthropic API, and writes a clean,
 professional **Obsidian-flavored markdown report** — with severity-ranked findings, root
 causes, and proposed solutions.
@@ -49,10 +49,13 @@ so the `.md` reads as a table in a plain-text view, not only through a renderer.
 
 ## How it works
 
-1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads the **newest** file
-   matching `/Logs/server.*.log` (`get -latest`) straight into `Raw Server Logs\`, keeping its
-   original server-side name. Each server start rotates the previous log to
-   `/Logs/server.yyyymmdd_hhmm.log`, and these accumulate both remotely and in the local archive.
+1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads `/System/server-old.log`
+   (UT99 rotates `server.log` to `server-old.log` at **every** server restart, manual or NFO's, and
+   overwrites the previous `server-old.log`). The copy is archived in `Raw Server Logs\` as
+   `server.yyyymmdd_hhmm.log`, named from the log's own "Log file open" time, and an existing
+   archive file is never overwritten. If that fetch fails, a normal run falls back to the legacy
+   source (newest `/Logs/server.*.log`, NFO's timestamped copies). `FetchSource = 'RotatedLogs'`
+   in `config.ps1` selects the legacy source only.
 2. **Digest** — a deterministic regex pre-scan deduplicates issue lines into *signatures with
    counts* (top-N per bucket), plus a tag histogram, per-map attribution, and connection/player
    analytics. Only this bounded digest — never the raw log — is sent to the API, so token cost
@@ -87,8 +90,12 @@ are shared.)
 ## Usage
 
 ```powershell
-# Full run: download the newest /Logs/server.*.log, analyze, write report.
+# Full run: download /System/server-old.log, archive it, analyze, write report.
 .\"UT99 ServerLog Analyzer.ps1"
+
+# Archive only: save server-old.log to the raw archive and exit (no analysis, no report).
+# Run this after a MANUAL server restart, before NFO's next restart overwrites server-old.log.
+.\"UT99 ServerLog Analyzer.ps1" -ArchiveOnly
 
 # Offline parse test (no download, no API cost).
 .\"UT99 ServerLog Analyzer.ps1" -NoFetch -NoAnalysis -LogFile "D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.20260802_0330.log"
@@ -99,6 +106,7 @@ are shared.)
 
 | Switch | Effect |
 |---|---|
+| `-ArchiveOnly` | Download and archive `server-old.log`, then exit (no digest, API call or report). |
 | `-NoFetch` | Skip the server download (use with `-LogFile`). |
 | `-NoAnalysis` | Skip the Claude API call (deterministic tallies only, no cost). |
 | `-LogFile <path>` | Analyze a specific local log. |
@@ -122,17 +130,25 @@ are shared.)
 .\Register-DailyTask.ps1 -Unregister
 ```
 
-The task runs **daily at 04:25** (the server boots between 02:00 and 05:00, creating the log).
+The task runs **daily at 07:30** (NFO's nightly restart currently lands at ~07:00, rotating the
+finished session into `server-old.log`). Run earlier and `server-old.log` is still the session
+*before* the one that just ended, so reports lag a session behind.
 It is registered to **run whether you are logged on or not**, with **highest privileges**
 (S4U + RunLevel Highest) — which is why registration needs an elevated shell.
 
-> **Do not move it to 05:00.** A separate "Daily Restart" task force-reboots the machine
-> (`shutdown /r /f`) at 05:00 every 3 days and will kill the run mid-fetch. The retry grid must
-> also miss 05:00, which is why the start time is 04:25 rather than 04:30.
+> **Keep the run and its retries off 05:00.** A separate "Daily Restart" task force-reboots the
+> machine (`shutdown /r /f`) at 05:00 every 3 days and will kill the run mid-fetch. 07:30 and its
+> 30-minute retry grid clear that.
+>
+> **Manual restarts:** a restart you do yourself also overwrites `server-old.log`, so a second
+> restart (NFO's) before the analyzer runs destroys the first session's log. Run
+> `-ArchiveOnly` between the two restarts to keep it. See `Capture Manual Restarts.md` for the
+> idea of merging archived sessions into one report (not implemented).
 
-If a run fails because no new log exists yet (server not booted) or there is no network,
-Windows Task Scheduler **retries every 30 minutes, up to 3 times** (04:55 / 05:25 / 05:55),
-until it succeeds. This is implemented via restart-on-failure: the script exits non-zero on any
+If a run fails (server unreachable, no network, WinSCP login failure), Windows Task Scheduler
+**retries every 30 minutes** (count set by `-RetryCount`) until it succeeds. If `server-old.log`
+hasn't changed since the last run (no restart), the run log notes it and the report repeats that
+session. This is implemented via restart-on-failure: the script exits non-zero on any
 fetch failure.
 
 Adjust with `-Time`, `-RetryIntervalMinutes`, and `-RetryCount`.
@@ -146,7 +162,9 @@ All settings live in `_system\config.ps1`. Key values:
 | Setting | Default | Purpose |
 |---|---|---|
 | `WinSCPSessionName` | `FMJ FTP Server` | Saved WinSCP session name |
-| `RemoteLogFolder` / `RemoteLogMask` | `/Logs/` / `server.*.log` | Remote log folder and wildcard mask; the **newest** match is downloaded |
+| `FetchSource` | `ServerOld` | `ServerOld` = fetch `RemoteLogPath`, fall back to the legacy source on failure; `RotatedLogs` = legacy only |
+| `RemoteLogPath` | `/System/server-old.log` | UT99's previous-session log (overwritten at every restart) |
+| `RemoteLogFolder` / `RemoteLogMask` | `/Logs/` / `server.*.log` | Legacy source: remote folder and mask; the **newest** match is downloaded |
 | `DeleteAfterDownload` | `$false` | Never deletes the server's rotated logs |
 | `LocalLogFolder` | `…\UTLogs\ServerLogs` | Where the report is written (and the parent of `RawLogSubfolder`) |
 | `RawLogSubfolder` | `Raw Server Logs` | Subfolder (under `LocalLogFolder`) where raw logs are archived, kept separate from reports |
