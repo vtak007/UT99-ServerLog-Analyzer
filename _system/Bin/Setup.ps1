@@ -13,10 +13,16 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $ConfigPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'config.ps1')
+    [string] $ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Default resolved here, not in param(): $PSScriptRoot is empty in param defaults on some hosts.
+if (-not $ConfigPath) {
+    $binDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $ConfigPath = Join-Path (Split-Path $binDir -Parent) 'config.ps1'
+}
 
 function Write-Step { param([string]$msg) Write-Host "`n--> $msg" -ForegroundColor Cyan }
 function Write-OK   { param([string]$msg) Write-Host "    OK  $msg" -ForegroundColor Green }
