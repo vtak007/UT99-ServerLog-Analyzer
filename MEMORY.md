@@ -186,6 +186,11 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-10-06 — `Setup.ps1`: default `$ConfigPath` now resolved in the script body (falls back to
+  `$MyInvocation.MyCommand.Path`) because `$PSScriptRoot` was empty in the `param()` default
+  (`Split-Path` empty-string error, reproduced in a plain PowerShell window). The main analyzer
+  script has the same param default but works under the scheduled task, so it was left as-is.
+  API key is the User env var `ANTHROPIC_API_KEY`; rotated by re-running Setup.ps1.
 - 2026-10-04 — Source switched to `/System/server-old.log`: archived as `server.yyyymmdd_hhmm.log`
   by "Log file open" time (never overwrites), legacy `/Logs/` fetch kept as fallback
   (`Config.FetchSource`/`RemoteLogPath`), new `-ArchiveOnly` switch, default schedule 07:30
