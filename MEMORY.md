@@ -164,7 +164,8 @@ See `CLAUDE.md` for project-specific details.
   re-running without `-NoAnalysis`. Point smoke tests at a log/date you don't mind clobbering.
 - Report/log filename date = the log's "Log file open" session date, not the run date.
 - Analysis is AI-assisted: a deterministic deduped **digest** (not raw lines) is sent to the
-  Anthropic API (`claude-sonnet-4-6`); `ANTHROPIC_API_KEY` is a User env var.
+  Anthropic API (`claude-sonnet-4-6`); the key is the User env var `UT99_ANALYZER_API_KEY` (never
+  `ANTHROPIC_API_KEY`: Claude Code prefers that over the Pro login and would bill the API).
 - Docs (`README.md`) are finalized only after a live end-to-end test + explicit approval.
 - Scheduled task runs daily at **07:30** (changed from 04:25 on 2026-10-04: NFO's restart now
   lands ~07:00, and an earlier run gets the previous-previous session). Retry
@@ -186,11 +187,12 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-10-15 — API key env var renamed `ANTHROPIC_API_KEY` -> `UT99_ANALYZER_API_KEY` in `Setup.ps1`, the main script and `Register-DailyTask.ps1` comments (same fix as the ChatLog Analyzer). Re-ran `Setup.ps1` to store the new var; verified offline with `-NoFetch -LogFile` on `server.20261013_0445.log` (exit 0, report `2026-10-13` written). First scheduled 07:30 run on the new var not yet confirmed. Old `ANTHROPIC_API_KEY` User var to be removed once all projects are migrated.
 - 2026-10-06 — `Setup.ps1`: default `$ConfigPath` now resolved in the script body (falls back to
   `$MyInvocation.MyCommand.Path`) because `$PSScriptRoot` was empty in the `param()` default
   (`Split-Path` empty-string error, reproduced in a plain PowerShell window). The main analyzer
   script has the same param default but works under the scheduled task, so it was left as-is.
-  API key is the User env var `ANTHROPIC_API_KEY`; rotated by re-running Setup.ps1.
+  API key is a User env var (renamed to `UT99_ANALYZER_API_KEY` on 2026-10-15); rotated by re-running Setup.ps1.
 - 2026-10-04 — Source switched to `/System/server-old.log`: archived as `server.yyyymmdd_hhmm.log`
   by "Log file open" time (never overwrites), legacy `/Logs/` fetch kept as fallback
   (`Config.FetchSource`/`RemoteLogPath`), new `-ArchiveOnly` switch, default schedule 07:30

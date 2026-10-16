@@ -1194,9 +1194,9 @@ try {
     } else {
         # Prefer the process env var; fall back to the User-scoped value in case
         # this is running under a scheduled S4U logon that didn't inherit it.
-        $apiKey = $env:ANTHROPIC_API_KEY
-        if (-not $apiKey) { $apiKey = [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY', 'User') }
-        if (-not $apiKey) { throw "ANTHROPIC_API_KEY environment variable is not set. Run Setup.ps1 to configure it." }
+        $apiKey = $env:UT99_ANALYZER_API_KEY
+        if (-not $apiKey) { $apiKey = [Environment]::GetEnvironmentVariable('UT99_ANALYZER_API_KEY', 'User') }
+        if (-not $apiKey) { throw "UT99_ANALYZER_API_KEY environment variable is not set. Run Setup.ps1 to configure it." }
         $analysis = Invoke-ServerLogAnalysis -Digest $digest -ApiKey $apiKey -Trend $trend -Model $Config.ApiModel -MaxTokens $Config.ApiMaxTokens
     }
 

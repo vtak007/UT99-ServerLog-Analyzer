@@ -70,7 +70,7 @@ so the `.md` reads as a table in a plain-text view, not only through a renderer.
 
 - **Windows** with **PowerShell 7** (`pwsh.exe`).
 - **WinSCP 6.5+** with a saved session named `FMJ FTP Server` (shared with the ChatLog Analyzer).
-- **`ANTHROPIC_API_KEY`** as a User environment variable.
+- **`UT99_ANALYZER_API_KEY`** as a User environment variable (set by `Setup.ps1`). Deliberately not `ANTHROPIC_API_KEY`, which Claude Code would use in preference to a Pro subscription login.
 
 ---
 
