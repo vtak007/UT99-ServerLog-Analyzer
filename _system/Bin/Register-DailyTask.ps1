@@ -5,7 +5,7 @@
 .DESCRIPTION
     Creates a scheduled task named "UT99 ServerLog Analyzer - Daily" that runs at the
     chosen local time, every day, in your current Windows user context (so it has
-    access to the saved WinSCP session and the ANTHROPIC_API_KEY env var).
+    access to the saved WinSCP session and the UT99_ANALYZER_API_KEY env var).
 
     Pick a time AFTER the server's nightly log rotation produces server-old.log.
 
@@ -101,7 +101,7 @@ $settings  = New-ScheduledTaskSettingsSet `
 # with highest privileges - matches the working "UT99 Chat Monitor - Daily" task
 # ("Run whether user is logged on or not" + "Run with highest privileges").
 # S4U loads the user's registry hive (HKCU) and profile, so the WinSCP saved
-# session and the ANTHROPIC_API_KEY User env var remain available.
+# session and the UT99_ANALYZER_API_KEY User env var remain available.
 # NOTE: registering an S4U / highest-privileges task requires an ELEVATED
 # (Run as Administrator) PowerShell session, or this call returns "Access is denied".
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
