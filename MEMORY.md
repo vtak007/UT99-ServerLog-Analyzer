@@ -5,6 +5,23 @@ See `CLAUDE.md` for project-specific details.
 
 ## CONFIRMED ROOT CAUSES
 
+- **Fallback fetch silently re-analyzes the newest archived log (found 2026-10-31).** On days when
+  `/System/server-old.log` is absent on the server, WinSCP fails with "Can't get attributes of
+  file", `Invoke-ServerFetch` falls back to `Invoke-RotatedLogFetch`, which downloads the frozen
+  `/Logs/server.20261001_1748.log` and then resolves the "fetched" file as the **newest-by-name
+  file in `RawLogFolder`** — now always a `server-old`-era archive. The run therefore re-digests a
+  log it already analyzed, spends a full paid API call and rewrites the identical dated report.
+  The code comment at `Invoke-RotatedLogFetch` states the assumption that WinSCP's `-latest` is
+  always >= anything archived locally; that stopped being true on 2026-10-04 when the archive
+  began receiving `server-old` sessions newer than anything in `/Logs/`. Evidence: of the last 14
+  runs, report dates repeat (10-29 x2, 10-27 x2, 10-24 x3, 10-22 x2, 10-18 x2) — roughly half the
+  daily API calls are duplicates. `Invoke-ServerOldFetch` has the correct "already archived" skip
+  guard; the fallback bypasses it. **Not yet fixed.**
+  **Open (WATCH):** why `/System/server-old.log` is missing on alternate days (10-28 present,
+  10-29 gone, 10-30 present, 10-31 gone; failure at 07:30:02) is unexplained — possibly a race
+  with NFO's restart renaming the file. This also supersedes the "only one clean rotation seen,
+  so unconfirmed" note in the 2026-10-04 entry below: rotation is now known to be intermittent.
+
 - **Reports lagging the current date (found 2026-10-04).** The analyzer read only
   `/Logs/server.*.log` (rotated files), and NFO's script stopped producing them after
   `server.20261001_1748.log`, so every run re-analyzed the 10-01 log (the 10-03 run rewrote the
@@ -187,7 +204,8 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
-- 2026-10-15 — API key env var renamed `ANTHROPIC_API_KEY` -> `UT99_ANALYZER_API_KEY` in `Setup.ps1`, the main script and `Register-DailyTask.ps1` comments (same fix as the ChatLog Analyzer). Re-ran `Setup.ps1` to store the new var; verified offline with `-NoFetch -LogFile` on `server.20261013_0445.log` (exit 0, report `2026-10-13` written). First scheduled 07:30 run on the new var not yet confirmed. Old `ANTHROPIC_API_KEY` User var to be removed once all projects are migrated.
+- 2026-10-31 — Docs/memory audit only (no code change): recorded the fallback-fetch re-analysis root cause and the intermittent missing `/System/server-old.log` as a WATCH item; corrected two stale notes (scheduled runs on `UT99_ANALYZER_API_KEY` now confirmed; fallback path no longer "not live-tested").
+- 2026-10-15 — API key env var renamed `ANTHROPIC_API_KEY` -> `UT99_ANALYZER_API_KEY` in `Setup.ps1`, the main script and `Register-DailyTask.ps1` comments (same fix as the ChatLog Analyzer). Re-ran `Setup.ps1` to store the new var; verified offline with `-NoFetch -LogFile` on `server.20261013_0445.log` (exit 0, report `2026-10-13` written). Scheduled 07:30 runs on the new var confirmed working daily from 2026-10-16 through 2026-10-31 (live API calls completing). Old `ANTHROPIC_API_KEY` User var still to be removed once all projects are migrated (open decision).
 - 2026-10-06 — `Setup.ps1`: default `$ConfigPath` now resolved in the script body (falls back to
   `$MyInvocation.MyCommand.Path`) because `$PSScriptRoot` was empty in the `param()` default
   (`Split-Path` empty-string error, reproduced in a plain PowerShell window). The main analyzer
@@ -198,7 +216,9 @@ Newest first. Format: `- YYYY-MM-DD — what changed`.
   (`Config.FetchSource`/`RemoteLogPath`), new `-ArchiveOnly` switch, default schedule 07:30
   (user changed the registered task manually). Added `Capture Manual Restarts.md` (merge-sessions
   idea, not implemented). Tested live: archive, idempotent re-run, full report `2026-10-03`.
-  Fallback path not live-tested. The 10-01 17:48 -> 10-03 17:45 sessions were never archived.
+  The 10-01 17:48 -> 10-03 17:45 sessions were never archived. Fallback path was not live-tested
+  at the time; it has since been exercised repeatedly (2026-10-29/31) and is **broken** — see
+  CONFIRMED ROOT CAUSES.
 - 2026-08-20 — Report duplication pass. Removed the `**Log covers:**` H1 line, the three coverage
   rows from the Health Dashboard, the entire `## Session & Config Overview` section, and the
   `Failed to load` rows from `## Recurring Warnings` (replaced by a pointer line to Failed-to-Load
