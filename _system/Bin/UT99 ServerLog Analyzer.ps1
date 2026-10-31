@@ -1,8 +1,8 @@
 ﻿<#
 .SYNOPSIS
-    UT99 ServerLog Analyzer - downloads the FMJ server's rotated log
-    (server-old.log) via WinSCP, analyzes it with Claude, and writes a
-    professional Obsidian-flavored markdown report.
+    UT99 ServerLog Analyzer - downloads the FMJ server's session logs
+    (server-old.log and the live server.log) via WinSCP, analyzes the newest
+    with Claude, and writes a professional Obsidian-flavored markdown report.
 
 .DESCRIPTION
     Designed to run unattended on a daily schedule via Windows Task Scheduler,
@@ -10,7 +10,10 @@
 
     Workflow:
         1. Connect to the server via WinSCP using the saved session and
-           download /System/server-old.log.
+           download BOTH /System/server-old.log (the previous, closed session -
+           often absent) and /System/server.log (the live session). Archive
+           both under their own "Log file open" times so no session is lost,
+           and analyze whichever is newest.
         2. Deterministically pre-scan the log (regex) into a bounded digest:
            header facts, tag histogram, and deduped issue signatures with
            counts (errors, warnings, Accessed None script warnings, network,
@@ -30,9 +33,14 @@
     (no findings/solutions). Useful for testing parsing without API cost.
 
 .PARAMETER ArchiveOnly
-    Download /System/server-old.log and archive it under its "Log file open"
-    name, then exit - no digest, no API call, no report. Run this after a
-    manual server restart (before NFO's own restart overwrites server-old.log).
+    Download and archive the server logs under their "Log file open" names,
+    then exit - no digest, no API call, no report. Run this after a manual
+    server restart (before NFO's own restart overwrites server-old.log).
+
+.PARAMETER Force
+    Analyze even when the digest is unchanged since the last run. Without it,
+    a run whose session and line count both match last-run.json exits 0 before
+    the API call instead of regenerating an identical report.
 
 .PARAMETER LogFile
     Analyze a specific local log file instead of the freshly downloaded one.
@@ -55,6 +63,7 @@ param(
     [switch]   $NoFetch,
     [switch]   $NoAnalysis,
     [switch]   $ArchiveOnly,
+    [switch]   $Force,
     [string]   $LogFile,
     [datetime] $Date
 )
@@ -99,45 +108,81 @@ Write-RunLog INFO "Config: $ConfigPath"
 Write-RunLog INFO "Log/report folder: $LogFolder"
 
 # ========================================================================== #
-#  Step 1 - Fetch server-old.log via WinSCP                                   #
+#  Step 1 - Fetch the session logs via WinSCP                                 #
 # ========================================================================== #
 
 function Invoke-ServerFetch {
     <#
-        Dispatcher. FetchSource 'ServerOld' (default) archives /System/server-old.log,
-        falling back to the legacy /Logs/server.*.log fetch if that fails (not in
-        -ArchiveOnly mode). 'RotatedLogs' uses the legacy fetch only.
+        Fetches BOTH remote logs, archives both, and returns the archive path of the
+        newest session (by "Log file open" time) for analysis.
+
+        /System/server-old.log is the complete, closed previous session - preferred when
+        present, but NOT reliably present: on 2026-10-31 it was absent despite a restart
+        at 03:05 that should have created it, and that session was lost for good. So a
+        failed fetch of it is a WARN, not an error. /System/server.log is the live session
+        and exists whenever the server runs, making it the dependable source.
+
+        Archiving both means a session is never lost even when it is not the one reported;
+        an archived-but-unreported session is named in a WARN so it can be reported later
+        with -LogFile.
+
         Returns the local archive path, or $null if fetch was skipped.
     #>
     if ($NoFetch) {
         Write-RunLog INFO "Skipping fetch (-NoFetch)."
         return $null
     }
-    if ($Config.FetchSource -ne 'RotatedLogs') {
-        try { return Invoke-ServerOldFetch }
-        catch {
-            if ($ArchiveOnly) { throw }
-            Write-RunLog WARN ("server-old.log fetch failed ({0}); falling back to {1}{2}." -f $_.Exception.Message, $Config.RemoteLogFolder, $Config.RemoteLogMask)
+
+    $candidates = @()
+
+    # 1. Previous (closed) session - optional, frequently absent.
+    try {
+        $candidates += Get-RemoteSessionLog -RemotePath $Config.RemoteLogPath
+    } catch {
+        Write-RunLog WARN ("{0} not fetched ({1}). Expected when the server has not rotated since the last run." -f $Config.RemoteLogPath, $_.Exception.Message)
+    }
+
+    # 2. Live session - the dependable source.
+    try {
+        $candidates += Get-RemoteSessionLog -RemotePath $Config.RemoteLivePath
+    } catch {
+        if (-not $candidates.Count) { throw }
+        Write-RunLog WARN ("{0} not fetched ({1}); continuing with the previous session only." -f $Config.RemoteLivePath, $_.Exception.Message)
+    }
+
+    if (-not $candidates.Count) { throw "No log could be fetched from the server." }
+
+    $chosen = @($candidates | Sort-Object Opened -Descending)[0]
+    foreach ($c in $candidates) {
+        if (($c.Path -ne $chosen.Path) -and $c.Archived) {
+            Write-RunLog WARN ("Archived but not reported this run: {0} (session opened {1}). Report it with -LogFile `"{2}`"." -f (Split-Path $c.Path -Leaf), $c.Opened.ToString('yyyy-MM-dd HH:mm'), $c.Path)
         }
     }
-    return Invoke-RotatedLogFetch
+    Write-RunLog INFO ("Analyzing newest session: {0} (opened {1})" -f (Split-Path $chosen.Path -Leaf), $chosen.Opened.ToString('yyyy-MM-dd HH:mm'))
+    return $chosen.Path
 }
 
-function Invoke-ServerOldFetch {
+function Get-RemoteSessionLog {
     <#
-        UT99 rotates server.log -> server-old.log at every restart (manual or NFO),
-        overwriting the previous server-old.log. Download it to a staging folder,
-        read its "Log file open" time, and archive it as server.yyyymmdd_hhmm.log
-        in RawLogFolder (same naming as the older archive). Never overwrites an
-        existing archive file. Returns the archive path.
+        Downloads one remote log into _system\State\staging via WinSCP, then archives it
+        through Save-SessionArchive. Returns the Save-SessionArchive result, or throws if
+        the fetch failed.
+
+        NOTE: existence is tested ONLY by attempting the download. FTP directory listings
+        on this host return stale metadata - on 2026-10-31 an ls reported /System/server.log
+        as 17,730 bytes modified 03:05 while the real file was 378,178 bytes with activity
+        through 12:44 - so no ls-based pre-check may be added here, and no decision may
+        depend on a listed size or mtime.
     #>
+    param([Parameter(Mandatory)][string]$RemotePath)
+
     if (-not (Test-Path $Config.WinSCPcomPath)) {
         throw "WinSCP.com not found at $($Config.WinSCPcomPath). Install WinSCP 6.5+ or update WinSCPcomPath in config.ps1."
     }
-    $remotePath = $Config.RemoteLogPath
+
     $staging = Join-Path $StateFolder 'staging'
     if (-not (Test-Path $staging)) { $null = New-Item -ItemType Directory -Force -Path $staging }
-    $staged = Join-Path $staging (($remotePath -split '/')[-1])
+    $staged = Join-Path $staging (($RemotePath -split '/')[-1])
     Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
 
     $wscpLines = @(
@@ -146,104 +191,76 @@ function Invoke-ServerOldFetch {
         'option transfer binary'
         'option reconnecttime 30'
         ('open "{0}"' -f $Config.WinSCPSessionName)
-        ('get "{0}" "{1}\"' -f $remotePath, $staging)
+        ('get "{0}" "{1}\"' -f $RemotePath, $staging)
         'exit'
     )
-    $tempScript = Join-Path $env:TEMP ("ut99srvfetch-{0}.wscp" -f (Get-Date -Format 'yyyyMMddHHmmss'))
-    $wscpXmlLog = Join-Path $StateFolder ("winscp-{0}.xml" -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'))
+    $stamp      = Get-Date -Format 'yyyy-MM-dd-HHmmss-fff'
+    $tempScript = Join-Path $env:TEMP ("ut99srvfetch-{0}.wscp" -f $stamp)
+    $wscpXmlLog = Join-Path $StateFolder ("winscp-{0}.xml" -f $stamp)
     Set-Content -Path $tempScript -Value ($wscpLines -join "`r`n") -Encoding ASCII
 
-    Write-RunLog INFO ("Fetching {0} from server..." -f $remotePath)
+    Write-RunLog INFO ("Fetching {0} from server..." -f $RemotePath)
     $stdout = & $Config.WinSCPcomPath /script=$tempScript /xmllog=$wscpXmlLog /xmlgroups 2>&1 | Out-String
     $exit = $LASTEXITCODE
     Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
 
-    Add-Content -Path $RunLogFile -Value "----- WinSCP stdout -----"
+    Add-Content -Path $RunLogFile -Value ("----- WinSCP stdout ({0}) -----" -f $RemotePath)
     Add-Content -Path $RunLogFile -Value $stdout
     Add-Content -Path $RunLogFile -Value "----- end WinSCP stdout -----"
 
     if ($exit -ne 0) {
-        Write-RunLog ERROR "WinSCP exit code $exit. See $wscpXmlLog and run log for details."
-        throw "WinSCP fetch of $remotePath failed (exit $exit)."
+        Write-RunLog ERROR "WinSCP exit code $exit for $RemotePath. See $wscpXmlLog and run log for details."
+        throw "WinSCP fetch of $RemotePath failed (exit $exit)."
     }
     if (-not (Test-Path -LiteralPath $staged)) { throw "WinSCP reported success but $staged was not created." }
 
-    $opened = Get-LogSessionDate -Path $staged
-    if (-not $opened) { throw "No 'Log file open' timestamp found in $remotePath; cannot name the archive copy." }
-    $name = 'server.{0}.log' -f $opened.ToString('yyyyMMdd_HHmm')
-    $dest = Join-Path $RawLogFolder $name
-
-    if (Test-Path -LiteralPath $dest) {
-        $lvl = if ($ArchiveOnly) { 'INFO' } else { 'WARN' }
-        Write-RunLog $lvl ("{0} is already archived (session opened {1}) - no server restart since the last archive, so this run repeats that session." -f $name, $opened.ToString('yyyy-MM-dd HH:mm'))
-        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
-    } else {
-        Move-Item -LiteralPath $staged -Destination $dest
-        Write-RunLog INFO ("Archived new session log: {0} ({1:N0} bytes)" -f $name, (Get-Item -LiteralPath $dest).Length)
-    }
-    return $dest
+    return Save-SessionArchive -StagedPath $staged -RemotePath $RemotePath
 }
 
-function Invoke-RotatedLogFetch {
+function Save-SessionArchive {
     <#
-        Legacy fetch: downloads the single newest-rotated remote log directly into the raw
-        log archive (RawLogFolder), keeping its original server-side name.
-        Returns the local path of the resolved file, or $null if fetch was
-        skipped.
+        Archives a staged log as server.<yyyyMMdd_HHmm>.log in RawLogFolder, named from
+        its own "Log file open" time. RawLogFolder is a permanent, never-wiped archive.
+
+        Supersede rule: a staged file LARGER than an existing archive of the same session
+        replaces it, because a longer capture of a monotonically appended log is a strict
+        superset. That is the normal case when the live server.log is fetched again while
+        the same session is still running. Otherwise the existing archive is kept and the
+        staged copy discarded. (This replaces the old never-overwrite rule, which would
+        reject every refreshed capture of a still-running session.)
+
+        Returns Path / Opened / Archived; Archived is $true if this call wrote the archive.
     #>
-    if (-not (Test-Path $Config.WinSCPcomPath)) {
-        throw "WinSCP.com not found at $($Config.WinSCPcomPath). Install WinSCP 6.5+ or update WinSCPcomPath in config.ps1."
-    }
-
-    $remoteFolder = $Config.RemoteLogFolder
-    if (-not $remoteFolder.EndsWith('/')) { $remoteFolder += '/' }
-    $remoteMask = $remoteFolder + $Config.RemoteLogMask
-
-    $deleteFlag = if ($Config.DeleteAfterDownload) { '-delete ' } else { '' }
-
-    $wscpLines = @(
-        'option batch abort'
-        'option confirm off'
-        'option transfer binary'
-        'option reconnecttime 30'
-        ('open "{0}"' -f $Config.WinSCPSessionName)
-        ('get -latest {0}"{1}" "{2}\"' -f $deleteFlag, $remoteMask, $RawLogFolder)
-        'exit'
+    param(
+        [Parameter(Mandatory)][string]$StagedPath,
+        [Parameter(Mandatory)][string]$RemotePath
     )
-    $wscpScript = $wscpLines -join "`r`n"
 
-    $tempScript = Join-Path $env:TEMP ("ut99srvfetch-{0}.wscp" -f (Get-Date -Format 'yyyyMMddHHmmss'))
-    $wscpXmlLog = Join-Path $StateFolder ("winscp-{0}.xml" -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'))
-    Set-Content -Path $tempScript -Value $wscpScript -Encoding ASCII
+    $opened = Get-LogSessionDate -Path $StagedPath
+    if (-not $opened) { throw "No 'Log file open' timestamp found in $RemotePath; cannot name the archive copy." }
 
-    Write-RunLog INFO ("Fetching newest {0} from server..." -f $remoteMask)
+    $name      = 'server.{0}.log' -f $opened.ToString('yyyyMMdd_HHmm')
+    $dest      = Join-Path $RawLogFolder $name
+    $stagedLen = (Get-Item -LiteralPath $StagedPath).Length
+    $archived  = $false
 
-    $stdout = & $Config.WinSCPcomPath /script=$tempScript /xmllog=$wscpXmlLog /xmlgroups 2>&1 | Out-String
-    $exit = $LASTEXITCODE
-    Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
-
-    Add-Content -Path $RunLogFile -Value "----- WinSCP stdout -----"
-    Add-Content -Path $RunLogFile -Value $stdout
-    Add-Content -Path $RunLogFile -Value "----- end WinSCP stdout -----"
-
-    if ($exit -ne 0) {
-        Write-RunLog ERROR "WinSCP exit code $exit. See $wscpXmlLog and run log for details."
-        Write-RunLog WARN  ("No log matching {0} yet (server not booted since the last rotation), or the server is unreachable (no network). If run by the scheduled task, it will retry in 30 minutes." -f $remoteMask)
-        throw "WinSCP fetch failed (exit $exit)."
+    if (Test-Path -LiteralPath $dest) {
+        $destLen = (Get-Item -LiteralPath $dest).Length
+        if ($stagedLen -gt $destLen) {
+            Move-Item -LiteralPath $StagedPath -Destination $dest -Force
+            $archived = $true
+            Write-RunLog INFO ("Superseded {0}: {1:N0} -> {2:N0} bytes (same session, more data)." -f $name, $destLen, $stagedLen)
+        } else {
+            Remove-Item -LiteralPath $StagedPath -Force -ErrorAction SilentlyContinue
+            Write-RunLog INFO ("{0} already archived at {1:N0} bytes; fetched copy ({2:N0} bytes) is not longer - keeping the archive." -f $name, $destLen, $stagedLen)
+        }
+    } else {
+        Move-Item -LiteralPath $StagedPath -Destination $dest
+        $archived = $true
+        Write-RunLog INFO ("Archived new session log: {0} ({1:N0} bytes)" -f $name, $stagedLen)
     }
 
-    # RawLogFolder is a permanent archive (never wiped), so it may hold many
-    # prior downloads alongside this one. The yyyymmdd_hhmm naming sorts
-    # lexicographically = chronologically, and WinSCP's -latest guarantees the
-    # newest remote file is always >= anything already archived locally, so
-    # the newest-by-name match is always the file we just fetched.
-    $matched = @(Get-ChildItem -LiteralPath $RawLogFolder -File -Filter $Config.RemoteLogMask | Sort-Object Name -Descending)
-    if ($matched.Count -eq 0) {
-        throw ("WinSCP reported success but no file matching {0} was found in {1}." -f $remoteMask, $RawLogFolder)
-    }
-    $fetchedPath = $matched[0].FullName
-    Write-RunLog INFO ("Fetch completed: {0} ({1:N0} bytes)" -f $matched[0].Name, $matched[0].Length)
-    return $fetchedPath
+    return [pscustomobject]@{ Path = $dest; Opened = $opened; Archived = $archived }
 }
 
 # ========================================================================== #
@@ -1166,9 +1183,36 @@ try {
         $digest.LineCount, [int]$digest.WarningTotal, [int]$digest.SWTotal, [int]$digest.ErrorTotal, $digest.Network.UniqueIPs)
 
     # Report date: -Date > log session date > today.
-    $reportDate = if ($Date) { $Date }
-                  elseif ($digest.LogOpen -and ($sd = Get-LogSessionDate -Path $sourceLog)) { $sd }
-                  else { Get-Date }
+    $sessionOpen = Get-LogSessionDate -Path $sourceLog
+    $reportDate  = if ($Date) { $Date }
+                   elseif ($digest.LogOpen -and $sessionOpen) { $sessionOpen }
+                   else { Get-Date }
+
+    # 2b. Duplicate-run guard. Keyed on CONTENT (session open time + line count), not
+    # on the filename: the live server.log fetched again while the same session is
+    # still running is a legitimate refresh and must pass, while a run that re-digests
+    # an unchanged log must not spend an API call. Before this guard the 2026-10-30 and
+    # 2026-10-31 runs each rewrote an identical Oct 29 report at full API cost.
+    # Bypassed for an explicit -LogFile, and overridable with -Force.
+    if (-not $Force -and -not $LogFile) {
+        $prevStateFile = Join-Path $StateFolder 'last-run.json'
+        if (Test-Path $prevStateFile) {
+            try { $prev = Get-Content $prevStateFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $prev = $null }
+            # ConvertFrom-Json turns the stored ISO string back into a [datetime], so both
+            # sides are normalized through one zone-insensitive format before comparing -
+            # a plain [string] cast yields the culture format and never matches.
+            $fmt      = 'yyyy-MM-ddTHH:mm:ss'
+            $prevOpen = ''
+            if ($prev -and $prev.session_open) {
+                try { $prevOpen = ([datetime]$prev.session_open).ToString($fmt) } catch { $prevOpen = '' }
+            }
+            $curOpen = if ($sessionOpen) { $sessionOpen.ToString($fmt) } else { '' }
+            if ($prev -and $prevOpen -and ($prevOpen -eq $curOpen) -and ([int]$prev.line_count -eq [int]$digest.LineCount)) {
+                Write-RunLog INFO ("No new log activity since the last run (session {0}, {1:N0} lines unchanged) - skipping analysis and report. Use -Force to override." -f $sessionOpen.ToString('yyyy-MM-dd HH:mm'), $digest.LineCount)
+                exit 0
+            }
+        }
+    }
 
     # 2.5 Trend vs history (Feature 1) - computed before analysis so the model sees it.
     $historyPath = Join-Path $StateFolder 'digest-history.json'
@@ -1215,6 +1259,8 @@ try {
     @{
         last_run_utc     = (Get-Date).ToUniversalTime().ToString('o')
         source_log       = $sourceLog
+        # Round-trip format; read back by the duplicate-run guard above.
+        session_open     = if ($sessionOpen) { $sessionOpen.ToString('o') } else { '' }
         report_path      = $reportPath
         line_count       = $digest.LineCount
         warnings         = [int]$digest.WarningTotal
