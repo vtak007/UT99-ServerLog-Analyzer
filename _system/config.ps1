@@ -15,30 +15,18 @@ $Config = @{
     WinSCPcomPath     = 'C:\Program Files (x86)\WinSCP\WinSCP.com'
 
     # --- Server side ---------------------------------------------------------
-    # Where to get the log. 'ServerOld' (default): download UT99's own
-    # RemoteLogPath (rotated at every restart) and archive it under its
-    # "Log file open" time; falls back to the legacy /Logs/ fetch below if that
-    # fails. 'RotatedLogs': legacy only (NFO's timestamped copies in /Logs/).
-    FetchSource       = 'ServerOld'
+    # Every run fetches BOTH of these and archives both, so a session can't be
+    # lost (see "Live-log fetch" in CLAUDE.md Design notes).
 
-    # UT99's previous-session log. Overwritten at every restart (manual or NFO),
-    # so run the analyzer with -ArchiveOnly after a manual restart.
+    # UT99's previous-session log: server.log is rotated here at every restart.
+    # Preferred source when present because the session is complete - but it is
+    # NOT reliably present (confirmed absent 2026-10-31 despite a restart), so a
+    # failed fetch of this path is a warning, not an error.
     RemoteLogPath     = '/System/server-old.log'
 
-    # Legacy source (FetchSource 'RotatedLogs', and the fallback):
-    # Remote folder containing the rotated server logs (relative to the saved
-    # session's home directory). Each server start rotates the previous log to
-    # /Logs/server.yyyymmdd_hhmm.log, so these accumulate over time.
-    RemoteLogFolder   = '/Logs/'
-
-    # Wildcard mask matching the rotated logs. The newest file matching this
-    # mask is downloaded (WinSCP 'get -latest'), which is the log from the most
-    # recent server start - e.g. server.20260809_0330.log.
-    RemoteLogMask     = 'server.*.log'
-
-    # If $true, delete the log from the server after a verified download.
-    # Leave $false - these are the server's own rotated logs.
-    DeleteAfterDownload = $false
+    # The live, currently-open session log. Exists whenever the server is
+    # running, so this is the dependable source; a failed fetch IS an error.
+    RemoteLivePath    = '/System/server.log'
 
     # --- Local paths ---------------------------------------------------------
     # Folder where the downloaded log AND the generated report are written.
