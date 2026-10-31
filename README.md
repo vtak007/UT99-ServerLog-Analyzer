@@ -56,6 +56,10 @@ so the `.md` reads as a table in a plain-text view, not only through a renderer.
    archive file is never overwritten. If that fetch fails, a normal run falls back to the legacy
    source (newest `/Logs/server.*.log`, NFO's timestamped copies). `FetchSource = 'RotatedLogs'`
    in `config.ps1` selects the legacy source only.
+   > **Known issue (2026-10-31):** the legacy fallback is broken. NFO stopped producing
+   > `/Logs/server.*.log` after 2026-10-01, and the fallback resolves the "fetched" file as the
+   > newest file already in `Raw Server Logs\`, so a fallback run re-analyzes the previous
+   > session and rewrites the identical report (one wasted API call). Not yet fixed.
 2. **Digest** — a deterministic regex pre-scan deduplicates issue lines into *signatures with
    counts* (top-N per bucket), plus a tag histogram, per-map attribution, and connection/player
    analytics. Only this bounded digest — never the raw log — is sent to the API, so token cost

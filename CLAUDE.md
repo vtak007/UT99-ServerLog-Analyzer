@@ -43,7 +43,11 @@ morning run over the previous night's rotated log is named for the session it co
   archive file is never overwritten (WARN "already archived" on a normal run, INFO under
   `-ArchiveOnly`). `Invoke-ServerFetch` dispatches on `Config.FetchSource` (`ServerOld` default;
   `RotatedLogs` = legacy only) and falls back to `Invoke-RotatedLogFetch` (legacy `get -latest`
-  on `RemoteLogFolder`+`RemoteLogMask`) if the server-old fetch fails in a normal run. The raw
+  on `RemoteLogFolder`+`RemoteLogMask`) if the server-old fetch fails in a normal run.
+  **The fallback is broken (found 2026-10-31, not yet fixed):** it resolves the fetched file as
+  the newest-by-name file in `RawLogFolder`, which since 2026-10-04 is always a `server-old`
+  archive newer than anything `/Logs/` still holds, so a fallback run re-digests the previous
+  session, spends an API call and rewrites the same report. See MEMORY CONFIRMED ROOT CAUSES. The raw
   folder is a **permanent, never-wiped archive**. The schedule is **07:30** because NFO's
   restart currently lands ~07:00; earlier runs get the session before the one that just ended.
   **Manual-restart gap:** a second restart overwrites the first session's `server-old.log`, so
