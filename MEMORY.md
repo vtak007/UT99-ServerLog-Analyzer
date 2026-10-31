@@ -16,11 +16,19 @@ See `CLAUDE.md` for project-specific details.
   began receiving `server-old` sessions newer than anything in `/Logs/`. Evidence: of the last 14
   runs, report dates repeat (10-29 x2, 10-27 x2, 10-24 x3, 10-22 x2, 10-18 x2) — roughly half the
   daily API calls are duplicates. `Invoke-ServerOldFetch` has the correct "already archived" skip
-  guard; the fallback bypasses it. **Not yet fixed.**
-  **Open (WATCH):** why `/System/server-old.log` is missing on alternate days (10-28 present,
-  10-29 gone, 10-30 present, 10-31 gone; failure at 07:30:02) is unexplained — possibly a race
-  with NFO's restart renaming the file. This also supersedes the "only one clean rotation seen,
-  so unconfirmed" note in the 2026-10-04 entry below: rotation is now known to be intermittent.
+  guard; the fallback bypasses it. **FIXED 2026-10-31** (branch `fix/live-log-fetch-and-dedupe`):
+  `Invoke-RotatedLogFetch` and its config keys were deleted outright, the live `/System/server.log`
+  is now fetched every run alongside `server-old.log`, and a content-keyed duplicate-run guard
+  blocks the API call when the session and line count are unchanged.
+  **Still open (WATCH):** why `/System/server-old.log` goes missing is still unexplained (10-28
+  present, 10-29 gone, 10-30 present, 10-31 gone). 2026-10-31 narrowed it: a direct `get` confirms
+  the file is **genuinely absent**, not an FTP stat glitch, and it was absent despite a 03:05
+  restart that should have created it — so something deletes it rather than rotation merely not
+  happening. Consequence: **the Oct 30 session (Oct 30 → Oct 31 03:05) was lost permanently** —
+  not on the server, not in `Raw Server Logs\`. Fetching the live log limits future loss to
+  whatever a single missing rotation costs, but does not explain the deletion. Possibly NFO's
+  restart wrapper removes it. This also supersedes the "only one clean rotation seen, so
+  unconfirmed" note in the 2026-10-04 entry below: rotation is now known to be intermittent.
 
 - **Reports lagging the current date (found 2026-10-04).** The analyzer read only
   `/Logs/server.*.log` (rotated files), and NFO's script stopped producing them after
@@ -95,6 +103,23 @@ See `CLAUDE.md` for project-specific details.
   08-04 report; ELD was NEW that run, tied to player CHUPAMELA.)
 
 ## PROJECT CONVENTIONS
+
+- **FTP directory listings on titan7 return stale metadata — never trust them.** 2026-10-31:
+  `ls /System/*.log` reported `server.log` as 17,730 bytes modified Oct 31 03:05 while the actual
+  download was 378,178 bytes with log activity through 12:44. Sizes and mtimes from a listing are
+  stale/cached; only a completed download is authoritative. `Get-RemoteSessionLog` therefore probes
+  existence **only by attempting the `get`** (a failed transfer is the "absent" signal). Never add
+  an `ls`-based pre-check, and never let a decision depend on a listed size or mtime.
+- **`ConvertFrom-Json` revives ISO date strings as `[datetime]`, so never `[string]`-cast one for
+  comparison.** 2026-10-31: the duplicate-run guard compared `last-run.json`'s `session_open`
+  (written with `ToString('o')`) against a fresh value, but `[string]$prev.session_open` yielded the
+  culture format `10/31/2026 03:05:16`, which never matched — the guard silently never fired and
+  the happy-path test still passed. Normalize **both** sides through one zone-insensitive format
+  (`yyyy-MM-ddTHH:mm:ss`) before comparing. Applies to any state field read back from JSON.
+- **A test run redirected with `-ConfigPath` must override `SystemFolder`, not just
+  `LocalLogFolder`.** `StateFolder`/`RunLogFolder` derive from `Config.SystemFolder`, so overriding
+  only `LocalLogFolder` still writes the **real** `last-run.json` and `digest-history.json`
+  (happened 2026-10-31; both had to be restored by hand). Override both for an isolated test.
 
 - **Five chronic maps are suppressed from `## Findings` (still allowed in `## Recommendations`).**
   `Config.SuppressedFindingsMaps` (regex fragments, case-insensitive): CyberSpace,
@@ -204,6 +229,7 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-10-31 — Live-log fetch + supersede-archiving + duplicate-run guard (`fix/live-log-fetch-and-dedupe`). `Invoke-ServerFetch` now fetches BOTH `/System/server-old.log` (WARN if absent) and `/System/server.log` via the new `Get-RemoteSessionLog`, archives both through the new `Save-SessionArchive`, and analyzes the newest session; `Invoke-RotatedLogFetch` and the `FetchSource`/`RemoteLogFolder`/`RemoteLogMask`/`DeleteAfterDownload` keys deleted; never-overwrite replaced by a supersede rule (longer capture of the same session wins); content-keyed guard added before the API call plus a new `-Force`; `session_open` added to `last-run.json`. Verified against the live server with state+output redirected to a scratchpad and no API calls: offline digest of the Oct 31 live log (6,668 lines, report dated 2026-10-31), real fetch (server-old WARN, archived `server.20261031_0305.log`), guard fires on unchanged re-run, supersede replaced a shortened archive (28,006 -> 378,178), `-Force` bypasses. The guard was broken on first write (see the `ConvertFrom-Json` convention) and fixed before commit. API path not yet exercised under the new code — first live run is the 07:30 scheduled task on 2026-11-01.
 - 2026-10-31 — Docs/memory audit only (no code change): recorded the fallback-fetch re-analysis root cause and the intermittent missing `/System/server-old.log` as a WATCH item; corrected two stale notes (scheduled runs on `UT99_ANALYZER_API_KEY` now confirmed; fallback path no longer "not live-tested").
 - 2026-10-15 — API key env var renamed `ANTHROPIC_API_KEY` -> `UT99_ANALYZER_API_KEY` in `Setup.ps1`, the main script and `Register-DailyTask.ps1` comments (same fix as the ChatLog Analyzer). Re-ran `Setup.ps1` to store the new var; verified offline with `-NoFetch -LogFile` on `server.20261013_0445.log` (exit 0, report `2026-10-13` written). Scheduled 07:30 runs on the new var confirmed working daily from 2026-10-16 through 2026-10-31 (live API calls completing). Old `ANTHROPIC_API_KEY` User var still to be removed once all projects are migrated (open decision).
 - 2026-10-06 — `Setup.ps1`: default `$ConfigPath` now resolved in the script body (falls back to

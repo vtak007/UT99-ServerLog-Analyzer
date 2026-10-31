@@ -1,7 +1,8 @@
 # UT99 ServerLog Analyzer
 
-Automatically downloads the FMJ UT99 server's previous-session log (`/System/server-old.log`) via WinSCP,
-analyzes it for issues, anomalies, and problems using the Anthropic API, and writes a clean,
+Automatically downloads the FMJ UT99 server's session logs (`/System/server-old.log` and the live
+`/System/server.log`) via WinSCP,
+analyzes the newest for issues, anomalies, and problems using the Anthropic API, and writes a clean,
 professional **Obsidian-flavored markdown report** — with severity-ranked findings, root
 causes, and proposed solutions.
 
@@ -49,17 +50,30 @@ so the `.md` reads as a table in a plain-text view, not only through a renderer.
 
 ## How it works
 
-1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads `/System/server-old.log`
-   (UT99 rotates `server.log` to `server-old.log` at **every** server restart, manual or NFO's, and
-   overwrites the previous `server-old.log`). The copy is archived in `Raw Server Logs\` as
-   `server.yyyymmdd_hhmm.log`, named from the log's own "Log file open" time, and an existing
-   archive file is never overwritten. If that fetch fails, a normal run falls back to the legacy
-   source (newest `/Logs/server.*.log`, NFO's timestamped copies). `FetchSource = 'RotatedLogs'`
-   in `config.ps1` selects the legacy source only.
-   > **Known issue (2026-10-31):** the legacy fallback is broken. NFO stopped producing
-   > `/Logs/server.*.log` after 2026-10-01, and the fallback resolves the "fetched" file as the
-   > newest file already in `Raw Server Logs\`, so a fallback run re-analyzes the previous
-   > session and rewrites the identical report (one wasted API call). Not yet fixed.
+1. **Fetch** — WinSCP (`WinSCP.com`) opens the saved session and downloads **both** session logs:
+   `/System/server-old.log` (the previous, closed session — UT99 rotates `server.log` here at every
+   restart, but it is **not reliably present**, so a failed fetch is only a warning) and
+   `/System/server.log` (the live session, which exists whenever the server is running and is
+   therefore the dependable source). Each copy is archived in `Raw Server Logs\` as
+   `server.yyyymmdd_hhmm.log`, named from the log's own "Log file open" time, and the **newest**
+   session is the one analyzed. Archiving both means a session is never lost even when it isn't the
+   one reported; an archived-but-unreported session is named in a `WARN` so it can be reported
+   later with `-LogFile`.
+
+   If an archive for that session already exists, a **longer** fetched copy supersedes it (a
+   growing capture of the same appended log is a strict superset); otherwise the existing archive
+   is kept. `Raw Server Logs\` remains a permanent, never-wiped archive.
+
+   Before the API call, a **duplicate-run guard** compares the session's "Log file open" time and
+   line count against `last-run.json`; if both are unchanged the run exits 0 without analyzing or
+   rewriting the report. `-Force` overrides it.
+   > **Why both logs (2026-10-31):** `/System/server-old.log` was absent despite a 03:05 restart
+   > that should have created it, and that session was lost for good. The old `/Logs/` fallback
+   > then resolved the "fetched" file as the newest file already in `Raw Server Logs\`, so roughly
+   > half the daily runs re-analyzed the previous session and rewrote an identical report at full
+   > API cost. The `/Logs/` source has produced nothing since 2026-10-01 and has been removed.
+   > Note also that FTP directory listings on this host return **stale sizes and mtimes**, so
+   > existence is probed only by attempting the download — never by a listing.
 2. **Digest** — a deterministic regex pre-scan deduplicates issue lines into *signatures with
    counts* (top-N per bucket), plus a tag histogram, per-map attribution, and connection/player
    analytics. Only this bounded digest — never the raw log — is sent to the API, so token cost
@@ -94,12 +108,15 @@ are shared.)
 ## Usage
 
 ```powershell
-# Full run: download /System/server-old.log, archive it, analyze, write report.
+# Full run: download both session logs, archive them, analyze the newest, write report.
 .\"UT99 ServerLog Analyzer.ps1"
 
-# Archive only: save server-old.log to the raw archive and exit (no analysis, no report).
+# Archive only: save the fetched logs to the raw archive and exit (no analysis, no report).
 # Run this after a MANUAL server restart, before NFO's next restart overwrites server-old.log.
 .\"UT99 ServerLog Analyzer.ps1" -ArchiveOnly
+
+# Re-analyze even when nothing has changed since the last run (bypasses the duplicate-run guard).
+.\"UT99 ServerLog Analyzer.ps1" -Force
 
 # Offline parse test (no download, no API cost).
 .\"UT99 ServerLog Analyzer.ps1" -NoFetch -NoAnalysis -LogFile "D:\Dropbox\Gaming\UTLogs\ServerLogs\Raw Server Logs\server.20260802_0330.log"
@@ -110,10 +127,11 @@ are shared.)
 
 | Switch | Effect |
 |---|---|
-| `-ArchiveOnly` | Download and archive `server-old.log`, then exit (no digest, API call or report). |
+| `-ArchiveOnly` | Download and archive the session logs, then exit (no digest, API call or report). |
 | `-NoFetch` | Skip the server download (use with `-LogFile`). |
 | `-NoAnalysis` | Skip the Claude API call (deterministic tallies only, no cost). |
-| `-LogFile <path>` | Analyze a specific local log. |
+| `-LogFile <path>` | Analyze a specific local log. Also bypasses the duplicate-run guard. |
+| `-Force` | Analyze even when the session and line count are unchanged since the last run. |
 | `-Date <yyyy-MM-dd>` | Force the report date (default: the log's own session date). |
 
 > **Caution:** `-NoAnalysis` writes a real report file (just without the AI narrative) — if a
@@ -166,10 +184,8 @@ All settings live in `_system\config.ps1`. Key values:
 | Setting | Default | Purpose |
 |---|---|---|
 | `WinSCPSessionName` | `FMJ FTP Server` | Saved WinSCP session name |
-| `FetchSource` | `ServerOld` | `ServerOld` = fetch `RemoteLogPath`, fall back to the legacy source on failure; `RotatedLogs` = legacy only |
-| `RemoteLogPath` | `/System/server-old.log` | UT99's previous-session log (overwritten at every restart) |
-| `RemoteLogFolder` / `RemoteLogMask` | `/Logs/` / `server.*.log` | Legacy source: remote folder and mask; the **newest** match is downloaded |
-| `DeleteAfterDownload` | `$false` | Never deletes the server's rotated logs |
+| `RemoteLogPath` | `/System/server-old.log` | UT99's previous-session log (overwritten at every restart, and often absent — a failed fetch is only a warning) |
+| `RemoteLivePath` | `/System/server.log` | The live session log; exists whenever the server runs, so this is the dependable source |
 | `LocalLogFolder` | `…\UTLogs\ServerLogs` | Where the report is written (and the parent of `RawLogSubfolder`) |
 | `RawLogSubfolder` | `Raw Server Logs` | Subfolder (under `LocalLogFolder`) where raw logs are archived, kept separate from reports |
 | `ApiModel` | `claude-sonnet-4-6` | Anthropic model |

@@ -1,6 +1,7 @@
 # UT99 ServerLog Analyzer — Project Instructions
 
-Downloads the FMJ server's previous-session log (`/System/server-old.log`) via WinSCP, analyzes it with the
+Downloads the FMJ server's session logs (`/System/server-old.log` and the live `/System/server.log`)
+via WinSCP, analyzes the newest with the
 Anthropic API, and writes a professional Obsidian markdown report. Modeled on the
 sibling **UT99 ChatLog Analyzer** project (same WinSCP-session + API patterns).
 
@@ -18,7 +19,7 @@ of the same task (per global doc-update gating: after tested + approved).
 | `_system\Bin\UT99 ServerLog Analyzer.ps1` | Main pipeline: fetch → digest → AI analysis → Obsidian report |
 | `_system\Bin\Setup.ps1` | One-time setup: folders, WinSCP/session check, API key, smoke test |
 | `_system\Bin\Register-DailyTask.ps1` | Windows Task Scheduler registration |
-| `_system\State\last-run.json` | Timestamp, paths, and counts from the last run |
+| `_system\State\last-run.json` | Timestamp, paths, counts and `session_open` from the last run; read back by the duplicate-run guard |
 | `_system\State\winscp-*.xml` | Per-fetch WinSCP session logs |
 | `_system\Runlogs\run-*.log` | Per-run text logs |
 | `README.md` (project root) | User documentation |
@@ -34,25 +35,42 @@ morning run over the previous night's rotated log is named for the session it co
 
 ## Design notes
 
-- **Source is `/System/server-old.log` (changed 2026-10-04):** UT99 rotates `server.log` to
-  `server-old.log` at every restart (manual or NFO's), **overwriting** the previous one. NFO's
-  timestamped `/Logs/server.*.log` copies (the 2026-08-09 source) stopped appearing after
-  2026-10-01 17:48, so the analyzer kept re-analyzing the same log. `Invoke-ServerOldFetch`
-  downloads it to `_system\State\staging`, reads the "Log file open" time via `Get-LogSessionDate`,
-  and moves it into `RawLogFolder` (`Raw Server Logs\`) as `server.yyyymmdd_hhmm.log`; an existing
-  archive file is never overwritten (WARN "already archived" on a normal run, INFO under
-  `-ArchiveOnly`). `Invoke-ServerFetch` dispatches on `Config.FetchSource` (`ServerOld` default;
-  `RotatedLogs` = legacy only) and falls back to `Invoke-RotatedLogFetch` (legacy `get -latest`
-  on `RemoteLogFolder`+`RemoteLogMask`) if the server-old fetch fails in a normal run.
-  **The fallback is broken (found 2026-10-31, not yet fixed):** it resolves the fetched file as
-  the newest-by-name file in `RawLogFolder`, which since 2026-10-04 is always a `server-old`
-  archive newer than anything `/Logs/` still holds, so a fallback run re-digests the previous
-  session, spends an API call and rewrites the same report. See MEMORY CONFIRMED ROOT CAUSES. The raw
-  folder is a **permanent, never-wiped archive**. The schedule is **07:30** because NFO's
-  restart currently lands ~07:00; earlier runs get the session before the one that just ended.
-  **Manual-restart gap:** a second restart overwrites the first session's `server-old.log`, so
-  after a manual restart run `-ArchiveOnly` before NFO's restart. Merging several archived
-  sessions into one report is sketched in `Capture Manual Restarts.md` (not implemented).
+- **Both session logs are fetched every run (changed 2026-10-31):** `Invoke-ServerFetch` calls
+  `Get-RemoteSessionLog` twice — for `Config.RemoteLogPath` (`/System/server-old.log`, the previous
+  closed session) and `Config.RemoteLivePath` (`/System/server.log`, the live one) — archives both
+  via `Save-SessionArchive`, and analyzes whichever has the newest "Log file open" time. A failed
+  `server-old` fetch is a **WARN, not an error**: it is frequently absent, and on 2026-10-31 it was
+  missing despite a 03:05 restart that should have created it, losing that session for good. The
+  live log exists whenever the server runs, so it is the dependable source and its failure is
+  fatal. Archiving both means a session is never lost even when it isn't the one reported; an
+  archived-but-unreported session is named in a WARN for later `-LogFile` use. Multi-session
+  reports in one run remain unimplemented (sketched in `Capture Manual Restarts.md`).
+  `Invoke-RotatedLogFetch` and the `FetchSource`/`RemoteLogFolder`/`RemoteLogMask`/
+  `DeleteAfterDownload` config keys were **deleted** — `/Logs/` has produced nothing since
+  2026-10-01 and the function silently re-digested the newest archive. See MEMORY CONFIRMED ROOT
+  CAUSES. The raw folder is a **permanent, never-wiped archive**. The schedule is **07:30** because
+  NFO's restart currently lands ~07:00; with the live log now fetched too, an early run no longer
+  loses the session, it just reports it before it ends.
+- **GOTCHA — never trust an FTP listing on this host.** On 2026-10-31 `ls /System/*.log` reported
+  `server.log` as 17,730 bytes modified 03:05 while the real file was 378,178 bytes with activity
+  through 12:44; sizes and mtimes are stale/cached and only a completed download is authoritative.
+  `Get-RemoteSessionLog` therefore probes existence **only by attempting the `get`** — a failed
+  transfer is the "absent" signal. Do not add an `ls`-based pre-check, and never let a decision
+  depend on a listed size or mtime.
+- **Supersede-archiving (`Save-SessionArchive`):** names the archive `server.yyyymmdd_hhmm.log`
+  from the log's own "Log file open" time. The former never-overwrite rule is **replaced** by a
+  supersede rule — a staged file **larger** than an existing archive of the same session replaces
+  it, since a longer capture of a monotonically appended log is a strict superset. This is the
+  normal case when the live `server.log` is fetched again while the same session still runs; under
+  the old rule every refreshed capture was rejected as "already archived".
+- **Duplicate-run guard (main flow, before `Invoke-ServerLogAnalysis`):** keyed on **content**
+  (session open time + line count vs `last-run.json`), not on the filename, so a grown session
+  still refreshes while an unchanged one exits 0 without an API call. Bypassed by `-LogFile`,
+  overridden by `-Force`. **GOTCHA:** `ConvertFrom-Json` revives the stored ISO `session_open`
+  string as a `[datetime]`, so a `[string]` cast of it yields the culture format
+  (`10/31/2026 03:05:16`) and never matches the round-trip value — both sides must be normalized
+  through one zone-insensitive format (`yyyy-MM-ddTHH:mm:ss`). The guard silently never fired
+  until this was fixed.
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
@@ -69,7 +87,7 @@ morning run over the previous night's rotated log is named for the session it co
 - **Buckets:** hard errors, `Warning:`, `ScriptWarning:`/Accessed None (grouped by
   `package.class.function` + offending variable), anti-cheat/integrity (UTPure/IGPlus/NSC),
   package/version. Plus a tag histogram and network counters (opens/closes/unique IPs/timeouts).
-- `DeleteAfterDownload` is `$false` — never delete the server's own rotated logs.
+- The server's own logs are **never deleted** — every fetch is a plain `get`, download-only.
 - Player IPs (PII) are counted, not sent verbatim to the API.
 - **Findings suppression (`Config.SuppressedFindingsMaps` + `Config.SuppressedFindingsPatterns`):**
   in `New-ServerLogReport`, before rendering `## Findings`, the two lists are unioned into one
