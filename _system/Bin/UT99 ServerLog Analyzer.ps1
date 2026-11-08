@@ -288,6 +288,41 @@ function Get-DaySessionLogs {
     return @(Get-ChildItem -LiteralPath $RawLogFolder -Filter $mask -File | Sort-Object Name | ForEach-Object FullName)
 }
 
+function Get-ShutdownEvents {
+    <#
+        One event per server start in the digest: that start proves the session before it
+        ended, so its "Log file open" time is the "down by" time. The session before the
+        first one is read from the previous archive. A reason exists only when the server
+        stopped itself (crash text, or a clean "Log file closed"); an outside kill leaves
+        nothing, and its last 16 KB of log is lost, so LastActivity can be hours early.
+    #>
+    param([Parameter(Mandatory)]$Digest, [Parameter(Mandatory)][string[]]$SourceLogs)
+
+    $archiveName = '^server\.\d{8}_\d{4}\.log$'
+    $ended = $null
+    $leaf  = Split-Path $SourceLogs[0] -Leaf
+    if ($leaf -match $archiveName) {
+        $prev = Get-ChildItem -LiteralPath $RawLogFolder -Filter 'server.*.log' -File |
+                Where-Object { $_.Name -match $archiveName -and $_.Name -lt $leaf } |
+                Sort-Object Name | Select-Object -Last 1
+        if ($prev) { $ended = @((Get-ServerLogDigest -Path $prev.FullName -TopN 1).Sessions) | Select-Object -Last 1 }
+    }
+
+    $events = foreach ($s in $Digest.Sessions) {
+        if ($ended) {
+            $reason = if ($ended.Crash) { 'Crash: ' + $ended.Crash }
+                      elseif ($ended.Closed) { 'Clean exit' }
+                      else { 'No reason logged' }
+            if ($reason.Length -gt 220) { $reason = $reason.Substring(0, 220) + '...' }
+            # A session that closed its own log recorded the exact time; use it.
+            $downBy = if ($ended.Closed) { $ended.Last } else { $s.First }
+            [pscustomobject]@{ DownBy = $downBy; LastActivity = $ended.Last; Reason = $reason; IsCrash = [bool]$ended.Crash }
+        }
+        $ended = $s
+    }
+    return @($events)
+}
+
 function Add-Signature {
     param([hashtable]$Dict, [string]$Sig, [string]$Example, [string]$Map)
     if ([string]::IsNullOrWhiteSpace($Sig)) { return }
@@ -397,13 +432,14 @@ function Get-ServerLogDigest {
                     $mutators.Clear(); $serverPackages.Clear()
                     $cur = [pscustomobject]@{
                         First = $null; Last = $null; LastOpen = $null; LastClose = $null
+                        Closed = $false; CrashNext = $false; Crash = ''
                         Maps = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
                         Players = [System.Collections.Generic.HashSet[string]]::new()
                         Warnings = 0; ScriptWarnings = 0; Errors = 0
                     }
                     $sessions.Add($cur)
                 }
-                if ($body -match '^Log file closed,\s+(.*)$') { $logClosed = $matches[1] }
+                if ($body -match '^Log file closed,\s+(.*)$') { $logClosed = $matches[1]; if ($cur) { $cur.Closed = $true } }
                 if ($body -match '^Server Package:\s+(\S+)') {
                     $sp = $matches[1]; if (-not $serverPackages.Contains($sp)) { $serverPackages.Add($sp) }
                 }
@@ -417,6 +453,14 @@ function Get-ServerLogDigest {
                     $mp = $matches[1]; if ($mapSet.Add($mp)) { $maps.Add($mp) }
                     if ($cur) { $null = $cur.Maps.Add($mp) }
                     $currentMap = $mp
+                }
+            }
+            '^Critical$' {
+                # The line after "appError called:" is the actual error; the rest is the stack.
+                if ($cur -and $body.Trim()) {
+                    if ($body -match '^appError called')  { $cur.CrashNext = $true }
+                    elseif ($cur.CrashNext)               { $cur.Crash = $body.Trim(); $cur.CrashNext = $false }
+                    elseif (-not $cur.Crash)              { $cur.Crash = $body.Trim() }
                 }
             }
             '^Warning$'       { Add-Signature $warnDict (Get-WarningSignature $body) $body $currentMap; if ($cur) { $cur.Warnings++ } }
@@ -733,6 +777,9 @@ function ConvertTo-DigestText {
             $null = $sb.AppendLine(("  opened {0}  last entry {1}  players={2} maps={3} hardErrors={4} warnings={5} scriptWarnings={6}" -f $s.First, $s.Last, $s.Players.Count, $s.Maps.Count, $s.Errors, $s.Warnings, $s.ScriptWarnings))
         }
     }
+    foreach ($e in @($Digest.Shutdowns | Where-Object IsCrash)) {
+        $null = $sb.AppendLine("SERVER CRASH (down by $($e.DownBy)): $($e.Reason)")
+    }
     $null = $sb.AppendLine("COMMAND LINE: $($Digest.CommandLine)")
     $null = $sb.AppendLine("MAPS PLAYED ($($Digest.Maps.Count)): $($Digest.Maps -join ', ')")
     $null = $sb.AppendLine("MUTATORS: $($Digest.Mutators -join ', ')")
@@ -1012,6 +1059,20 @@ function New-ServerLogReport {
         }
         $null = $sb.Append((Format-MdTable -Headers @('Opened','Last entry','Length','Players','Maps','Hard errors','Warnings','Script warnings','Note') -Aligns @('L','L','R','R','R','R','R','R','L') -Rows $sessionRows))
         $null = $sb.Append($A)
+    }
+
+    # --- Shutdowns ---
+    $null = $sb.Append('## Shutdowns'+$A+$A)
+    if (@($Digest.Shutdowns).Count -eq 0) {
+        $null = $sb.Append('No shutdowns on record for this day.'+$A+$A)
+    } else {
+        $fmtWhen = { param($t) if ($t) { $t.ToString('MM-dd HH:mm') } else { '' } }
+        $shutRows = foreach ($e in $Digest.Shutdowns) {
+            ,@((& $fmtWhen $e.DownBy), (& $fmtWhen $e.LastActivity), (Format-MdCell $e.Reason))
+        }
+        $null = $sb.Append((Format-MdTable -Headers @('Down by','Last log activity','Reason') -Aligns @('L','L','L') -Rows $shutRows))
+        $null = $sb.Append($A)
+        $null = $sb.Append('> [!note] "Down by" is the next server start, or the exact time when the server closed its own log. "No reason logged" usually means the server was stopped from outside (NFO restart or control panel), and its last log activity can be hours early.'+$A+$A)
     }
 
     # --- Health dashboard ---
@@ -1300,6 +1361,9 @@ try {
             }
         }
     }
+
+    # 2c. What ended before each server start in this report.
+    $digest | Add-Member -NotePropertyName Shutdowns -NotePropertyValue @(Get-ShutdownEvents -Digest $digest -SourceLogs $sourceLogs)
 
     # 2.5 Trend vs history (Feature 1) - computed before analysis so the model sees it.
     $historyPath = Join-Path $StateFolder 'digest-history.json'
