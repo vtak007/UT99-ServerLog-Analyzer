@@ -46,8 +46,9 @@
     Analyze a specific local log file instead of the freshly downloaded one.
 
 .PARAMETER Date
-    Force the report date (yyyy-MM-dd). Default: the log's own session date,
-    else today.
+    The day to report (yyyy-MM-dd): every archived session that opened on it is
+    merged into one report. Default: yesterday. With -LogFile it only labels the
+    report, and that single file is analyzed.
 
 .EXAMPLE
     .\UT99 ServerLog Analyzer.ps1
@@ -114,7 +115,8 @@ Write-RunLog INFO "Log/report folder: $LogFolder"
 function Invoke-ServerFetch {
     <#
         Fetches BOTH remote logs, archives both, and returns the archive path of the
-        newest session (by "Log file open" time) for analysis.
+        newest session (by "Log file open" time). Which sessions get reported is decided
+        separately, from the archive, by Get-DaySessionLogs.
 
         /System/server-old.log is the complete, closed previous session - preferred when
         present, but NOT reliably present: on 2026-10-31 it was absent despite a restart
@@ -122,9 +124,7 @@ function Invoke-ServerFetch {
         failed fetch of it is a WARN, not an error. /System/server.log is the live session
         and exists whenever the server runs, making it the dependable source.
 
-        Archiving both means a session is never lost even when it is not the one reported;
-        an archived-but-unreported session is named in a WARN so it can be reported later
-        with -LogFile.
+        Archiving both means a session is never lost when the server restarts again.
 
         Returns the local archive path, or $null if fetch was skipped.
     #>
@@ -153,12 +153,7 @@ function Invoke-ServerFetch {
     if (-not $candidates.Count) { throw "No log could be fetched from the server." }
 
     $chosen = @($candidates | Sort-Object Opened -Descending)[0]
-    foreach ($c in $candidates) {
-        if (($c.Path -ne $chosen.Path) -and $c.Archived) {
-            Write-RunLog WARN ("Archived but not reported this run: {0} (session opened {1}). Report it with -LogFile `"{2}`"." -f (Split-Path $c.Path -Leaf), $c.Opened.ToString('yyyy-MM-dd HH:mm'), $c.Path)
-        }
-    }
-    Write-RunLog INFO ("Analyzing newest session: {0} (opened {1})" -f (Split-Path $chosen.Path -Leaf), $chosen.Opened.ToString('yyyy-MM-dd HH:mm'))
+    Write-RunLog INFO ("Newest session on the server: {0} (opened {1})" -f (Split-Path $chosen.Path -Leaf), $chosen.Opened.ToString('yyyy-MM-dd HH:mm'))
     return $chosen.Path
 }
 
@@ -281,6 +276,18 @@ function Get-LogSessionDate {
     return $null
 }
 
+function Get-DaySessionLogs {
+    <#
+        Returns every archived session that OPENED on the given day, oldest first. Archive
+        names carry the session's own "Log file open" time, so the name alone selects them.
+        Selecting by open date (rather than "newer than the last report") still includes a
+        session that kept growing after an earlier report.
+    #>
+    param([Parameter(Mandatory)][datetime]$Day)
+    $mask = 'server.{0}_*.log' -f $Day.ToString('yyyyMMdd')
+    return @(Get-ChildItem -LiteralPath $RawLogFolder -Filter $mask -File | Sort-Object Name | ForEach-Object FullName)
+}
+
 function Add-Signature {
     param([hashtable]$Dict, [string]$Sig, [string]$Example, [string]$Map)
     if ([string]::IsNullOrWhiteSpace($Sig)) { return }
@@ -306,9 +313,11 @@ function Get-WarningSignature {
 }
 
 function Get-ServerLogDigest {
-    param([Parameter(Mandatory)][string]$Path, [int]$TopN = 25)
+    # -Path takes several files to merge a day's sessions. Each is read separately so a
+    # capture ending mid-line cannot run into the next file's first line.
+    param([Parameter(Mandatory)][string[]]$Path, [int]$TopN = 25)
 
-    $lines = Get-Content -LiteralPath $Path -Encoding UTF8
+    $lines = @(foreach ($p in $Path) { Get-Content -LiteralPath $p -Encoding UTF8 })
     $lineCount = $lines.Count
 
     $tagHist = [ordered]@{}
@@ -328,7 +337,12 @@ function Get-ServerLogDigest {
     # Connection/player analytics collectors (Feature 3).
     $opens       = [System.Collections.Generic.List[object]]::new()   # ordered; index i == TcpipConnection i
     $closesByIdx = @{}                                                 # TcpipConnection index -> close datetime
-    $playerByKey = @{}                                                 # "ip:port" -> player name
+    $playerByKey = @{}                                                 # "session|ip:port" -> player name
+
+    # Per-session state. TcpipConnection numbers restart at 0 with each server start, so
+    # $idxBase maps a session's connection number onto its position in $opens.
+    $sessions = [System.Collections.Generic.List[object]]::new()
+    $cur = $null; $idxBase = 0
     $inv = [System.Globalization.CultureInfo]::InvariantCulture
     $parseTs = {
         param($s)
@@ -375,22 +389,37 @@ function Get-ServerLogDigest {
                 if ($body -match '^Base directory:\s+(.*)$'){ $baseDir = $matches[1] }
             }
             '^Log$' {
-                if ($body -match '^Log file open,\s+(.*)$')   { if (-not $logOpen) { $logOpen = $matches[1] }; $restarts++ }
+                if ($body -match '^Log file open,\s+(.*)$') {
+                    if (-not $logOpen) { $logOpen = $matches[1] }
+                    $restarts++
+                    # New server start: config fields describe the latest session.
+                    $idxBase = $opens.Count; $currentMap = '(startup)'; $commandLine = ''
+                    $mutators.Clear(); $serverPackages.Clear()
+                    $cur = [pscustomobject]@{
+                        First = $null; Last = $null; LastOpen = $null; LastClose = $null
+                        Maps = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+                        Players = [System.Collections.Generic.HashSet[string]]::new()
+                        Warnings = 0; ScriptWarnings = 0; Errors = 0
+                    }
+                    $sessions.Add($cur)
+                }
                 if ($body -match '^Log file closed,\s+(.*)$') { $logClosed = $matches[1] }
                 if ($body -match '^Server Package:\s+(\S+)') {
                     $sp = $matches[1]; if (-not $serverPackages.Contains($sp)) { $serverPackages.Add($sp) }
                 }
                 if ($body -match '^LoadMap:\s+([A-Za-z0-9_\-]+\.unr)') {
                     $mp = $matches[1]; if ($mapSet.Add($mp)) { $maps.Add($mp) }
+                    if ($cur) { $null = $cur.Maps.Add($mp) }
                     $currentMap = $mp                       # track active map for attribution
                     $mapRounds++                            # counts repeats (each map load = a round)
                 }
                 elseif ($body -match '^Browse:\s+([A-Za-z0-9_\-]+\.unr)') {
                     $mp = $matches[1]; if ($mapSet.Add($mp)) { $maps.Add($mp) }
+                    if ($cur) { $null = $cur.Maps.Add($mp) }
                     $currentMap = $mp
                 }
             }
-            '^Warning$'       { Add-Signature $warnDict (Get-WarningSignature $body) $body $currentMap }
+            '^Warning$'       { Add-Signature $warnDict (Get-WarningSignature $body) $body $currentMap; if ($cur) { $cur.Warnings++ } }
             '^ScriptWarning$' {
                 $sig = $null
                 if ($body -match '\(Function\s+([^)]+?):[0-9A-Fa-f]+\)\s+(.*)$') {
@@ -400,6 +429,7 @@ function Get-ServerLogDigest {
                     $sig = Get-WarningSignature $body
                 }
                 Add-Signature $swDict $sig $body $currentMap
+                if ($cur) { $cur.ScriptWarnings++ }
             }
             '^(UTPure|IGPlus|NSC)$' {
                 if ($body -match '(?i)\b(kick|ban|cheat|exploit|violation|mismatch|illegal|reject|fail)') {
@@ -409,18 +439,23 @@ function Get-ServerLogDigest {
             '^ScriptLog$' {
                 # NPLoader emits: [NPLoaderv24] Player Join: <name> (<ip>:<port>) - pairs name<->ip:port.
                 if ($body -match 'Player Join:\s+(.+?)\s+\((\d{1,3}(?:\.\d{1,3}){3}):(\d+)\)') {
-                    $playerByKey[("{0}:{1}" -f $matches[2], $matches[3])] = $matches[1]
+                    $playerByKey[("{0}|{1}:{2}" -f $sessions.Count, $matches[2], $matches[3])] = $matches[1]
                 }
             }
             '^NetComeGo$' {
                 if ($body -match '^Open\s+\S+\s+(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{2}:\d{2}:\d{2})\s+(\d{1,3}(?:\.\d{1,3}){3}):(\d+)') {
                     $netOpens++
                     $null = $ipSet.Add($matches[2])
-                    $opens.Add([pscustomobject]@{ Index = $opens.Count; TS = (& $parseTs $matches[1]); IP = $matches[2]; Key = ("{0}:{1}" -f $matches[2], $matches[3]) })
+                    $openTs = & $parseTs $matches[1]
+                    $opens.Add([pscustomobject]@{ Index = $opens.Count; TS = $openTs; IP = $matches[2]; Key = ("{0}|{1}:{2}" -f $sessions.Count, $matches[2], $matches[3]); Session = $cur })
+                    if ($cur -and $openTs -and (-not $cur.LastOpen -or $openTs -gt $cur.LastOpen)) { $cur.LastOpen = $openTs }
                 }
                 elseif ($body -match '^Close\s+TcpipConnection(\d+)\s+(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{2}:\d{2}:\d{2})') {
                     $netCloses++
-                    $closesByIdx[[int]$matches[1]] = (& $parseTs $matches[2])
+                    $closeIdx = $idxBase + [int]$matches[1]
+                    $closeTs  = & $parseTs $matches[2]
+                    $closesByIdx[$closeIdx] = $closeTs
+                    if ($cur -and $closeTs -and (-not $cur.LastClose -or $closeTs -gt $cur.LastClose)) { $cur.LastClose = $closeTs }
                 }
                 elseif ($body -match '^Open') { $netOpens++; if ($body -match '(\d{1,3}(?:\.\d{1,3}){3}):\d+') { $null = $ipSet.Add($matches[1]) } }
                 elseif ($body -match '^Close') { $netCloses++ }
@@ -433,12 +468,17 @@ function Get-ServerLogDigest {
             if ($ts) {
                 if (-not $firstTs -or $ts -lt $firstTs) { $firstTs = $ts }
                 if (-not $lastTs  -or $ts -gt $lastTs)  { $lastTs  = $ts }
+                if ($cur) {
+                    if (-not $cur.First -or $ts -lt $cur.First) { $cur.First = $ts }
+                    if (-not $cur.Last  -or $ts -gt $cur.Last)  { $cur.Last  = $ts }
+                }
             }
         }
 
         # Cross-tag detectors (independent of tag)
         if ($body -match '(?i)(assertion failed|appError|Critical:|=== Critical|\bFatal\b|General protection fault|Runaway loop|Failed to enter)') {
             Add-Signature $errDict (Get-WarningSignature $body) $body $currentMap
+            if ($cur) { $cur.Errors++ }
         }
         if ($body -match '(?i)(version mismatch|package mismatch|wrong version|failed to load package|guid mismatch)') {
             Add-Signature $pkgDict (Get-WarningSignature $body) $body $currentMap
@@ -493,7 +533,13 @@ function Get-ServerLogDigest {
         $name = $playerByKey[$o.Key]
         if (-not $name) { continue }                 # only named player sessions
         $playerSessions++
-        $endTs = if ($closesByIdx.ContainsKey($o.Index)) { $closesByIdx[$o.Index] } else { $endFallback }
+        # A connection still open when its session's log stops ends with THAT session,
+        # never at the end of a later one.
+        $endTs = if ($closesByIdx.ContainsKey($o.Index)) { $closesByIdx[$o.Index] }
+                 elseif ($o.Session -and $o.Session.LastClose) { $o.Session.LastClose }
+                 elseif ($o.Session -and $o.Session.LastOpen)  { $o.Session.LastOpen }
+                 else { $endFallback }
+        if ($o.Session) { $null = $o.Session.Players.Add($name) }
         $dur = if ($o.TS -and $endTs -and $endTs -ge $o.TS) { ($endTs - $o.TS).TotalSeconds } else { $null }
         if (-not $playerAgg.ContainsKey($name)) {
             $playerAgg[$name] = [pscustomobject]@{ Name = $name; Joins = 0; TotalSec = 0.0; First = $o.TS; IPs = [System.Collections.Generic.HashSet[string]]::new() }
@@ -533,7 +579,8 @@ function Get-ServerLogDigest {
     } else { '' }
 
     [pscustomobject]@{
-        LogPath        = $Path
+        LogPaths       = @($Path)
+        Sessions       = @($sessions)
         LineCount      = $lineCount
         FirstEntry     = $firstTs
         LastEntry      = $lastTs
@@ -680,6 +727,12 @@ function ConvertTo-DigestText {
     $null = $sb.AppendLine("ENGINE: $($Digest.EngineVersion)")
     $null = $sb.AppendLine("SESSION OPEN: $($Digest.LogOpen)   CLOSED: $($Digest.LogClosed)   RESTARTS(open-events): $($Digest.Restarts)")
     $null = $sb.AppendLine("LOG COVERS: $($Digest.FirstEntryText) -> $($Digest.LastEntryText)  ($($Digest.SpanText))")
+    if (@($Digest.Sessions).Count -gt 1) {
+        $null = $sb.AppendLine("SESSIONS IN THIS REPORT ($(@($Digest.Sessions).Count) server starts, totals below are combined):")
+        foreach ($s in $Digest.Sessions) {
+            $null = $sb.AppendLine(("  opened {0}  last entry {1}  players={2} maps={3} hardErrors={4} warnings={5} scriptWarnings={6}" -f $s.First, $s.Last, $s.Players.Count, $s.Maps.Count, $s.Errors, $s.Warnings, $s.ScriptWarnings))
+        }
+    }
     $null = $sb.AppendLine("COMMAND LINE: $($Digest.CommandLine)")
     $null = $sb.AppendLine("MAPS PLAYED ($($Digest.Maps.Count)): $($Digest.Maps -join ', ')")
     $null = $sb.AppendLine("MUTATORS: $($Digest.Mutators -join ', ')")
@@ -779,6 +832,12 @@ Guidance specific to this stack:
 - Flag any genuine anti-cheat/integrity events (ACE/IG+ kicks, mismatches) as High+.
 - If a TREND section is present, comment on notable changes vs the previous run and call out
   any NEW SIGNATURES explicitly (a brand-new error type after an update deserves attention).
+- The server writes its log to disk in 16 KB blocks and restarts do not flush the last block,
+  so a session's last entry is NOT when it ended. A short session, or one with no players, is
+  NOT evidence of a crash or failed startup: only report a crash when HARD ERRORS show one.
+- A digest can combine several sessions from one day. The admin restarts the server to test
+  mods and maps, so sessions with no players are usually testing or idle time. Issues in them
+  still count as findings, but do not treat frequent restarts as a problem on their own.
 - Do NOT invent problems that are not supported by the digest. If the log is healthy, say so.
 
 Rate overall severity conservatively. Order findings most-severe first.
@@ -908,7 +967,7 @@ function New-ServerLogReport {
     $null = $sb.Append('server: FMJ'+$A)
     $null = $sb.Append('date: ' + $ReportDate.ToString('yyyy-MM-dd') + $A)
     $null = $sb.Append('engine: "' + $Digest.EngineVersion + '"'+$A)
-    $null = $sb.Append('source_log: "' + (Split-Path $Digest.LogPath -Leaf) + '"'+$A)
+    $null = $sb.Append('source_log: "' + (($Digest.LogPaths | ForEach-Object { Split-Path $_ -Leaf }) -join ', ') + '"'+$A)
     $null = $sb.Append('log_first_entry: "' + $Digest.FirstEntryText + '"'+$A)
     $null = $sb.Append('log_last_entry: "' + $Digest.LastEntryText + '"'+$A)
     $null = $sb.Append('generated: ' + (Get-Date).ToString('yyyy-MM-dd HH:mm') + $A)
@@ -935,6 +994,25 @@ function New-ServerLogReport {
     $null = $sb.Append('> [!' + $statusCallout + '] Overall status: ' + $status + $A)
     foreach ($ln in ($summary -split '\r?\n')) { $null = $sb.Append('> ' + $ln + $A) }
     $null = $sb.Append($A)
+
+    # --- Sessions (only when this report merges more than one) ---
+    if (@($Digest.Sessions).Count -gt 1) {
+        $null = $sb.Append('## Sessions'+$A+$A)
+        $sessionRows = foreach ($s in $Digest.Sessions) {
+            $len = if ($s.First -and $s.Last) {
+                $d = $s.Last - $s.First
+                if ($d.TotalHours -ge 1) { '{0}h {1}m' -f [math]::Floor($d.TotalHours), $d.Minutes } else { '{0}m' -f [math]::Floor($d.TotalMinutes) }
+            } else { '' }
+            ,@(
+                $(if ($s.First) { $s.First.ToString('MM-dd HH:mm') } else { '' })
+                $(if ($s.Last)  { $s.Last.ToString('MM-dd HH:mm') }  else { '' })
+                $len, [string]$s.Players.Count, [string]$s.Maps.Count, [string]$s.Errors, [string]$s.Warnings, [string]$s.ScriptWarnings
+                $(if ($s.Players.Count -eq 0) { 'No players' } else { '' })
+            )
+        }
+        $null = $sb.Append((Format-MdTable -Headers @('Opened','Last entry','Length','Players','Maps','Hard errors','Warnings','Script warnings','Note') -Aligns @('L','L','R','R','R','R','R','R','L') -Rows $sessionRows))
+        $null = $sb.Append($A)
+    }
 
     # --- Health dashboard ---
     $n = $Digest.Network
@@ -1165,25 +1243,32 @@ try {
 
     if ($LogFile) {
         if (-not (Test-Path $LogFile)) { throw "Specified -LogFile not found: $LogFile" }
-        $sourceLog = $LogFile
-        Write-RunLog INFO "Analyzing specified log: $sourceLog"
+        $sourceLogs = @($LogFile)
+        Write-RunLog INFO "Analyzing specified log: $LogFile"
     }
-    elseif ($fetched) {
-        # Already archived under its original name by Invoke-ServerFetch.
-        $sourceLog = $fetched
+    elseif ($Date -or $fetched) {
+        # Report one day: -Date, else yesterday (the scheduled run lands just after midnight,
+        # while the day's last session is still live and already archived above).
+        $day = if ($Date) { $Date.Date } else { (Get-Date).Date.AddDays(-1) }
+        $sourceLogs = @(Get-DaySessionLogs -Day $day)
+        if (-not $sourceLogs.Count) {
+            Write-RunLog WARN ("No archived session opened on {0} - no report written." -f $day.ToString('yyyy-MM-dd'))
+            exit 0
+        }
+        Write-RunLog INFO ("Reporting {0}: {1} session(s): {2}" -f $day.ToString('yyyy-MM-dd'), $sourceLogs.Count, (($sourceLogs | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))
     }
     else {
-        throw "Nothing to analyze: -NoFetch was set but no -LogFile was provided."
+        throw "Nothing to analyze: -NoFetch was set without -LogFile or -Date."
     }
 
     # 2. Deterministic digest.
     Write-RunLog INFO "Scanning log into digest..."
-    $digest = Get-ServerLogDigest -Path $sourceLog -TopN ([int]$Config.MaxSignaturesPerBucket)
+    $digest = Get-ServerLogDigest -Path $sourceLogs -TopN ([int]$Config.MaxSignaturesPerBucket)
     Write-RunLog INFO ("Digest: {0} lines, {1} warnings, {2} script warnings, {3} hard errors, {4} unique IPs." -f `
         $digest.LineCount, [int]$digest.WarningTotal, [int]$digest.SWTotal, [int]$digest.ErrorTotal, $digest.Network.UniqueIPs)
 
     # Report date: -Date > log session date > today.
-    $sessionOpen = Get-LogSessionDate -Path $sourceLog
+    $sessionOpen = Get-LogSessionDate -Path $sourceLogs[0]
     $reportDate  = if ($Date) { $Date }
                    elseif ($digest.LogOpen -and $sessionOpen) { $sessionOpen }
                    else { Get-Date }
@@ -1193,6 +1278,8 @@ try {
     # still running is a legitimate refresh and must pass, while a run that re-digests
     # an unchanged log must not spend an API call. Before this guard the 2026-10-30 and
     # 2026-10-31 runs each rewrote an identical Oct 29 report at full API cost.
+    # On a merged day the key is the first session plus the combined line count, so a new
+    # session that day also counts as activity.
     # Bypassed for an explicit -LogFile, and overridable with -Force.
     if (-not $Force -and -not $LogFile) {
         $prevStateFile = Join-Path $StateFolder 'last-run.json'
@@ -1258,7 +1345,7 @@ try {
     $stateFile = Join-Path $StateFolder 'last-run.json'
     @{
         last_run_utc     = (Get-Date).ToUniversalTime().ToString('o')
-        source_log       = $sourceLog
+        source_log       = ($sourceLogs -join '; ')
         # Round-trip format; read back by the duplicate-run guard above.
         session_open     = if ($sessionOpen) { $sessionOpen.ToString('o') } else { '' }
         report_path      = $reportPath
