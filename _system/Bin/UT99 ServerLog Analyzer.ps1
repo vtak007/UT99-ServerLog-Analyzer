@@ -694,9 +694,13 @@ function Get-Trend {
         try { $history = @(Get-Content $HistoryPath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { $history = @() }
     }
 
-    # Union of all signatures seen in prior-dated entries -> for NEW detection.
+    # Union of all signatures seen in EARLIER-dated entries -> for NEW detection.
+    # Must be -lt, not -ne: re-running an older day (back-fill) would otherwise take its
+    # baseline from a LATER report and treat that day's signatures as already seen, so
+    # nothing was ever NEW and the dashboard read "Delta vs <a later date>" (found 2026-11-09
+    # re-running 2026-11-07, which compared itself against 2026-11-08).
     $seen = [System.Collections.Generic.HashSet[string]]::new()
-    $prior = @($history | Where-Object { $_.date -ne $curDateStr })
+    $prior = @($history | Where-Object { $_.date -lt $curDateStr })
     foreach ($h in $prior) {
         if ($h.signatures) { foreach ($p in $h.signatures.PSObject.Properties) { $null = $seen.Add($p.Name) } }
     }
