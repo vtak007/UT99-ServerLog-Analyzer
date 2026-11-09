@@ -234,7 +234,11 @@ All settings live in `_system\config.ps1`. Key values:
 
 ## Notes
 
-- **Run the server with `-forcelogflush`.** Without it UT99 buffers its log in ~16 KB blocks, so
+- **`-forcelogflush` on the server would fix truncated session logs, but NFO's panel won't take
+  it** (2026-11-09): the "starting line" field accepts a URL only and rejects any token with a dash
+  or a space, and the switch has no `.ini` equivalent. Pending a different panel field or an answer
+  from NFO support, treat every session log as missing its final unflushed block.
+  Without the flag UT99 buffers its log in ~16 KB blocks, so
   the copy on the server — and therefore every fetch — stops short of what has actually happened,
   and the final partial block is lost outright when the process is killed at a restart. That is
   why a report's "Last log activity" can sit 45–60 minutes before the restart that ended the

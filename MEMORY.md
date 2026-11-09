@@ -16,9 +16,15 @@ See `CLAUDE.md` for project-specific details.
   same figure appearing for two different sessions is this, not a duplicate archive). **Measured:**
   a local dedicated server was started, left 20s and killed; without `-forcelogflush` only 22 lines
   / 996 bytes had reached disk (frozen at `Bound to Engine.dll`), with the flag 75 lines / 3,605
-  bytes through `Game engine initialized`. **Fix:** add `-forcelogflush` to the server command line
-  at NFO (user action, outstanding as of 2026-11-09). Until it is on, do not read a gap between
-  last activity and the next start as downtime.
+  bytes through `Game engine initialized`. Corroborated server-side: of ~80 archives only
+  `server.20260906_2333.log` contains a `Log file closed` marker, and every recent archive ends
+  **mid-line** (last byte is not a newline), so the buffer was never flushed. A gap between "last
+  log activity" and the next start is therefore **lost log, not downtime** — never read it as an
+  outage. **Fix:** `-forcelogflush` on the server command line — but NFO's panel **rejects it**
+  (2026-11-09): the "starting line" field takes a URL only and refuses any token containing a dash
+  or a space, and there is **no `.ini` equivalent** — both `forceflush` and `forcelogflush` exist
+  only as command-line `ParseParam` switches in the 469 binaries. Needs another panel field or NFO
+  support.
 
 - **Fallback fetch silently re-analyzes the newest archived log (found 2026-10-31).** On days when
   `/System/server-old.log` is absent on the server, WinSCP fails with "Can't get attributes of
@@ -46,8 +52,9 @@ See `CLAUDE.md` for project-specific details.
   unconfirmed" note in the 2026-10-04 entry below: rotation is now known to be intermittent.
   **2026-11-09 update:** the hourly task gives per-hour resolution and confirms the deletion
   directly (present 11-08 18:15, absent 19:15 → 03:15 across the 18:19 restart, present from
-  04:15 after the 03:55 one). Shutdown cleanliness is **ruled out** as the discriminator — see
-  RULED-OUT THEORIES. The data loss is now closed off regardless: the hourly `-ArchiveOnly` run
+  04:15 after the 03:55 one). Shutdown cleanliness cannot be the discriminator — see RULED-OUT
+  THEORIES; essentially every session ends killed with an unflushed buffer, so there is no
+  variation to correlate against. The data loss is now closed off regardless: the hourly `-ArchiveOnly` run
   captures the session whether or not it ever rotates, so this is a curiosity for NFO support to
   answer, not a risk to the archive.
 
@@ -91,17 +98,23 @@ See `CLAUDE.md` for project-specific details.
 
 ## RULED-OUT THEORIES
 
-- **"`/System/server-old.log` appears only after a clean shutdown" (2026-11-09) — false.** Shutdown
-  cleanliness does not predict whether a restart rotates the log. Counter-example from the same
-  pair of restarts: `server.20261108_0240.log` ends with the engine's full shutdown sequence (a
-  flood of `Log: Close: Error while attempting to close socket.`, i.e. a clean exit) and the 18:19
-  restart produced **no** `server-old.log` — it also removed the copy that was there, which had
-  held the Nov 7 session. `server.20261108_1819.log` ends mid-line at 03:11 with no shutdown
-  sequence (killed) and the 03:55 restart **did** produce one. Hourly presence data for that
-  window: present 18:15, absent 19:15 → 03:15, present from 04:15 onward. So it is not "rotation
-  sometimes doesn't happen" — something removes the file on some restarts, and nothing visible from
-  the FTP side distinguishes them. Next step is asking NFO whether their restart wrapper or
-  control-panel stop/start touches `/System/*.log`; it cannot be settled from this end.
+- **"`/System/server-old.log` appears only after a clean shutdown" (2026-11-09) — untestable, and
+  the first attempt to test it used a bogus marker.** `Log: Close: Error while attempting to close
+  socket.` is **not** a shutdown sequence: it is routine per-connection noise appearing 3,893–8,611
+  times per log and starting around line 303, so a log that happens to end in a run of it says
+  nothing about how the server went down. (A first pass on 2026-11-09 read those tails as clean
+  exits and briefly recorded a counter-example built on them — wrong.) The real marker is
+  `Log file closed`, present in exactly **one** of ~80 archives (`server.20260906_2333.log`).
+  Every recent archive instead ends **mid-line** (last byte is not a newline:
+  `server.20261107_0245.log`, `...1108_0240`, `...1108_1819`, `...1109_0355` all do), i.e. the
+  process was killed with an unflushed buffer. So there is no variation in shutdown cleanliness to
+  correlate against rotation — effectively every session is killed — and the theory cannot explain
+  why some restarts rotate and some delete. Hourly presence data for the window: present 18:15,
+  absent 19:15 → 03:15 (restart 18:19), present from 04:15 (restart 03:55). Something removes the
+  file on some restarts; nothing visible from the FTP side distinguishes them. Next step is asking
+  NFO whether their restart wrapper or control-panel stop/start touches `/System/*.log`.
+  **Corollary:** a gap between "last log activity" and the next start is **lost log, not
+  downtime** — do not read it as an outage.
 - **"The hourly archive task might still miss a session that never rotates" (2026-11-09) —
   disproved in practice.** The Nov 8 18:19 session was fully archived (1,377,602 bytes) by the
   hourly `-ArchiveOnly` runs *before* `server-old.log` appeared at 04:15 holding exactly the same

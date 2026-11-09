@@ -101,8 +101,14 @@ morning run over the previous night's rotated log is named for the session it co
   17:22 against an 18:19 restart), and why archives for short sessions come out at suspiciously
   round sizes (17,730 / 34,114 / 66,882 bytes — the same session plus N blocks). Confirmed locally
   2026-11-09: of a server's startup output, 22 lines reached disk without the flag versus 75 with
-  it. Do **not** read a gap between last activity and the next start as downtime until the flag is
-  on the server command line.
+  it. Server-side corroboration: only 1 of ~80 archives (`server.20260906_2333.log`) carries a
+  `Log file closed` marker and every recent archive ends **mid-line**, so the buffer is normally
+  lost. A gap between last activity and the next start is **lost log, not downtime** — never read
+  it as an outage. `Log: Close: Error while attempting to close socket.` is **not** a shutdown
+  marker (3,893–8,611 occurrences per log, from ~line 303); `Log file closed` is.
+  **The flag cannot currently be set:** NFO's panel refuses it in the "starting line" field (URL
+  only — no dashes or spaces) and there is no `.ini` equivalent, since both `forceflush` and
+  `forcelogflush` exist only as command-line `ParseParam` switches.
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**
