@@ -18,7 +18,7 @@ of the same task (per global doc-update gating: after tested + approved).
 | `_system\config.ps1` | All user-facing settings (WinSCP session, remote/local paths, API model) |
 | `_system\Bin\UT99 ServerLog Analyzer.ps1` | Main pipeline: fetch → digest → AI analysis → Obsidian report |
 | `_system\Bin\Setup.ps1` | One-time setup: folders, WinSCP/session check, API key, smoke test |
-| `_system\Bin\Register-DailyTask.ps1` | Windows Task Scheduler registration |
+| `_system\Bin\Register-DailyTask.ps1` | Windows Task Scheduler registration — registers **both** the 01:30 daily run and the hourly `-ArchiveOnly` task (`-NoHourly` skips the latter) |
 | `_system\State\last-run.json` | Timestamp, paths, counts and `session_open` from the last run; read back by the duplicate-run guard |
 | `_system\State\winscp-*.xml` | Per-fetch WinSCP session logs |
 | `_system\Runlogs\run-*.log` | Per-run text logs |
@@ -42,15 +42,32 @@ morning run over the previous night's rotated log is named for the session it co
   `server-old` fetch is a **WARN, not an error**: it is frequently absent, and on 2026-10-31 it was
   missing despite a 03:05 restart that should have created it, losing that session for good. The
   live log exists whenever the server runs, so it is the dependable source and its failure is
-  fatal. Archiving both means a session is never lost even when it isn't the one reported; an
-  archived-but-unreported session is named in a WARN for later `-LogFile` use. Multi-session
-  reports in one run remain unimplemented (sketched in `Capture Manual Restarts.md`).
+  fatal. Archiving both means a session is never lost even when it isn't the one reported.
   `Invoke-RotatedLogFetch` and the `FetchSource`/`RemoteLogFolder`/`RemoteLogMask`/
   `DeleteAfterDownload` config keys were **deleted** — `/Logs/` has produced nothing since
   2026-10-01 and the function silently re-digested the newest archive. See MEMORY CONFIRMED ROOT
-  CAUSES. The raw folder is a **permanent, never-wiped archive**. The schedule is **07:30** because
-  NFO's restart currently lands ~07:00; with the live log now fetched too, an early run no longer
-  loses the session, it just reports it before it ends.
+  CAUSES. The raw folder is a **permanent, never-wiped archive**.
+- **One report per DAY, merged from the archive (added 2026-11-08):** what gets reported is chosen
+  from `RawLogFolder`, not from whatever was just downloaded — every archived session whose
+  "Log file open" date matches the report date (default yesterday, or `-Date`) is merged into one
+  report, and the digest sums across them. A day with several restarts therefore yields a single
+  report with a **Sessions** row per session (the table is omitted when a day held one session),
+  not one report per restart. This replaced "analyze whichever session is newest" and makes
+  `Capture Manual Restarts.md` obsolete as a plan — it is implemented.
+- **Shutdowns section (added 2026-11-08, `Get-ShutdownEvents`):** one row per server start in the
+  report, giving what the server was **down by** (the next start, or its own log-close time), the
+  **last log activity** before it, and the reason if one was logged. Shutdowns triggered from
+  outside the game (NFO restart, control panel) log no reason, so those rows read "No reason
+  logged" — that is expected, not a parsing failure.
+- **Two scheduled tasks (`Register-DailyTask.ps1` registers both):** `UT99 ServerLog Analyzer -
+  Daily` at **01:30** (full run) and `UT99 ServerLog Analyzer - Hourly Archive` every hour at
+  **:15** (`-ArchiveOnly`: fetch + archive, no digest, no API call, so it is free). The hourly task
+  is what makes a session impossible to lose, given that `server-old.log` is only sometimes created
+  at a restart and the live log is buffered. Because the daily run merges whole days out of the
+  archive, **it no longer has to be timed against a restart** — that is why 01:30 replaced the old
+  07:30 slot, which existed only to follow NFO's ~07:00 restart. 01:30 and its 30-minute retry grid
+  also clear the 05:00 `shutdown /r /f` reboot of this machine. The hourly task has no
+  restart-on-failure: the next hour is the retry.
 - **GOTCHA — never trust an FTP listing on this host.** On 2026-10-31 `ls /System/*.log` reported
   `server.log` as 17,730 bytes modified 03:05 while the real file was 378,178 bytes with activity
   through 12:44; sizes and mtimes are stale/cached and only a completed download is authoritative.
@@ -71,6 +88,27 @@ morning run over the previous night's rotated log is named for the session it co
   (`10/31/2026 03:05:16`) and never matches the round-trip value — both sides must be normalized
   through one zone-insensitive format (`yyyy-MM-ddTHH:mm:ss`). The guard silently never fired
   until this was fixed.
+- **Trend baseline must be the newest EARLIER day (`Get-Trend`, fixed 2026-11-09):** the history
+  filter is `$_.date -lt $curDateStr`, **not** `-ne`. With `-ne` the baseline was the newest entry
+  in the whole history, so re-running an older day compared it against a *later* report (the
+  2026-11-07 re-run rendered "Δ vs 2026-11-08") and, because that later day's signatures were
+  already in the seen-set, nothing could ever be flagged NEW. `$prev` derives from `$prior`, so the
+  one filter governs both the delta baseline and new-signature detection.
+- **16 KB server-side log buffering — run the server with `-forcelogflush`.** UT99 buffers its log
+  in ~16 KB blocks, so the file on the server lags actual play and the final partial block is lost
+  outright when the process is killed at a restart. This is why a report's "Last log activity" sits
+  45–60 minutes before the restart that ended the session (e.g. `server.20261108_0240.log` ends
+  17:22 against an 18:19 restart), and why archives for short sessions come out at suspiciously
+  round sizes (17,730 / 34,114 / 66,882 bytes — the same session plus N blocks). Confirmed locally
+  2026-11-09: of a server's startup output, 22 lines reached disk without the flag versus 75 with
+  it. Server-side corroboration: only 1 of ~80 archives (`server.20260906_2333.log`) carries a
+  `Log file closed` marker and every recent archive ends **mid-line**, so the buffer is normally
+  lost. A gap between last activity and the next start is **lost log, not downtime** — never read
+  it as an outage. `Log: Close: Error while attempting to close socket.` is **not** a shutdown
+  marker (3,893–8,611 occurrences per log, from ~line 303); `Log file closed` is.
+  **The flag cannot currently be set:** NFO's panel refuses it in the "starting line" field (URL
+  only — no dashes or spaces) and there is no `.ini` equivalent, since both `forceflush` and
+  `forcelogflush` exist only as command-line `ParseParam` switches.
 - **Log coverage window:** the digest scans every timestamp format the log actually contains
   (`Log file open`, `NetComeGo`, MapVote `yyyy/MM/dd Time >`, ACE `[TIME] dd-MM-yyyy`, day-first)
   and min/max's them into `FirstEntry`/`LastEntry`/`SpanText`. Rotated logs have **no**

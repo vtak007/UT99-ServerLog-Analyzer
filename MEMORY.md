@@ -5,6 +5,27 @@ See `CLAUDE.md` for project-specific details.
 
 ## CONFIRMED ROOT CAUSES
 
+- **16 KB server-side log buffering explains the gap between "last log activity" and the restart
+  (confirmed locally 2026-11-09).** UT99 buffers its log in ~16 KB blocks. The consequences are
+  (a) the copy on the server — and therefore every fetch, however timely — stops short of what has
+  actually happened, and (b) the final partial block is **lost outright** when the process is
+  killed at a restart. This is why Shutdowns rows show a 45–60 minute gap before the restart that
+  ended the session (`server.20261108_0240.log` ends 17:22 against an 18:19 restart;
+  `server.20261108_1819.log` ends 03:11 against an 03:55 restart) and why short sessions archive at
+  recurring round sizes (17,730 / 34,114 / 66,882 bytes = the session header plus N blocks — the
+  same figure appearing for two different sessions is this, not a duplicate archive). **Measured:**
+  a local dedicated server was started, left 20s and killed; without `-forcelogflush` only 22 lines
+  / 996 bytes had reached disk (frozen at `Bound to Engine.dll`), with the flag 75 lines / 3,605
+  bytes through `Game engine initialized`. Corroborated server-side: of ~80 archives only
+  `server.20260906_2333.log` contains a `Log file closed` marker, and every recent archive ends
+  **mid-line** (last byte is not a newline), so the buffer was never flushed. A gap between "last
+  log activity" and the next start is therefore **lost log, not downtime** — never read it as an
+  outage. **Fix:** `-forcelogflush` on the server command line — but NFO's panel **rejects it**
+  (2026-11-09): the "starting line" field takes a URL only and refuses any token containing a dash
+  or a space, and there is **no `.ini` equivalent** — both `forceflush` and `forcelogflush` exist
+  only as command-line `ParseParam` switches in the 469 binaries. Needs another panel field or NFO
+  support.
+
 - **Fallback fetch silently re-analyzes the newest archived log (found 2026-10-31).** On days when
   `/System/server-old.log` is absent on the server, WinSCP fails with "Can't get attributes of
   file", `Invoke-ServerFetch` falls back to `Invoke-RotatedLogFetch`, which downloads the frozen
@@ -29,6 +50,13 @@ See `CLAUDE.md` for project-specific details.
   whatever a single missing rotation costs, but does not explain the deletion. Possibly NFO's
   restart wrapper removes it. This also supersedes the "only one clean rotation seen, so
   unconfirmed" note in the 2026-10-04 entry below: rotation is now known to be intermittent.
+  **2026-11-09 update:** the hourly task gives per-hour resolution and confirms the deletion
+  directly (present 11-08 18:15, absent 19:15 → 03:15 across the 18:19 restart, present from
+  04:15 after the 03:55 one). Shutdown cleanliness cannot be the discriminator — see RULED-OUT
+  THEORIES; essentially every session ends killed with an unflushed buffer, so there is no
+  variation to correlate against. The data loss is now closed off regardless: the hourly `-ArchiveOnly` run
+  captures the session whether or not it ever rotates, so this is a curiosity for NFO support to
+  answer, not a risk to the archive.
 
 - **Reports lagging the current date (found 2026-10-04).** The analyzer read only
   `/Logs/server.*.log` (rotated files), and NFO's script stopped producing them after
@@ -70,6 +98,27 @@ See `CLAUDE.md` for project-specific details.
 
 ## RULED-OUT THEORIES
 
+- **"`/System/server-old.log` appears only after a clean shutdown" (2026-11-09) — untestable, and
+  the first attempt to test it used a bogus marker.** `Log: Close: Error while attempting to close
+  socket.` is **not** a shutdown sequence: it is routine per-connection noise appearing 3,893–8,611
+  times per log and starting around line 303, so a log that happens to end in a run of it says
+  nothing about how the server went down. (A first pass on 2026-11-09 read those tails as clean
+  exits and briefly recorded a counter-example built on them — wrong.) The real marker is
+  `Log file closed`, present in exactly **one** of ~80 archives (`server.20260906_2333.log`).
+  Every recent archive instead ends **mid-line** (last byte is not a newline:
+  `server.20261107_0245.log`, `...1108_0240`, `...1108_1819`, `...1109_0355` all do), i.e. the
+  process was killed with an unflushed buffer. So there is no variation in shutdown cleanliness to
+  correlate against rotation — effectively every session is killed — and the theory cannot explain
+  why some restarts rotate and some delete. Hourly presence data for the window: present 18:15,
+  absent 19:15 → 03:15 (restart 18:19), present from 04:15 (restart 03:55). Something removes the
+  file on some restarts; nothing visible from the FTP side distinguishes them. Next step is asking
+  NFO whether their restart wrapper or control-panel stop/start touches `/System/*.log`.
+  **Corollary:** a gap between "last log activity" and the next start is **lost log, not
+  downtime** — do not read it as an outage.
+- **"The hourly archive task might still miss a session that never rotates" (2026-11-09) —
+  disproved in practice.** The Nov 8 18:19 session was fully archived (1,377,602 bytes) by the
+  hourly `-ArchiveOnly` runs *before* `server-old.log` appeared at 04:15 holding exactly the same
+  size. The hourly capture, not rotation, is what guarantees the session.
 - **"The live `/Logs/server.log` is already being fetched" (2026-10-04) — false.** The mask
   `server.*.log` only matches rotated files; the live/previous logs are in `/System/`. The WinSCP
   password loss explained only the 10-04 failure, not the multi-day lag.
@@ -104,6 +153,33 @@ See `CLAUDE.md` for project-specific details.
 
 ## PROJECT CONVENTIONS
 
+- **An archive's filename does NOT tell you which side produced it.** `Save-SessionArchive` names
+  every local archive `server.yyyymmdd_hhmm.log` from the log's own "Log file open" time — the same
+  pattern NFO's `/Logs/` rotation script used, so the two are indistinguishable by name. Provenance
+  of `Raw Server Logs\` as of 2026-11-09: **2026-08-07 → 08-22** (17 files) no longer on the server
+  at all; **08-23 → 10-01** (39) from NFO's `/Logs/` script; **10-03 → 11-09** (24+) from
+  `/System/server-old.log` plus the live `/System/server.log` under the current code. Determine
+  provenance by comparing against a `/Logs/` listing, never by the name.
+- **We have never deleted anything from the server.** Every fetch is a plain `get`; the old
+  `DeleteAfterDownload` key was `$false` in every version that had it, and the code only passed
+  WinSCP's `-delete` when it was true. Confirmed 2026-11-09 when the `/Logs/` files stopping was
+  suspected to be our doing: all 196 sessions from Aug 23 to Oct 1 are still on the server,
+  including 116 we never downloaded, and `/Logs/` went quiet on 2026-10-01, three days *before* the
+  2026-10-04 source switch. The gap is explained by the old `get -latest`, which fetched only the
+  single newest match per run — anything that rotated between two runs was never fetched.
+- **A trend/history baseline is the newest EARLIER dated entry — filter with `-lt`, never `-ne`.**
+  2026-11-09: `Get-Trend` selected `$_.date -ne $curDateStr`, then sorted by date and took the
+  last, i.e. the newest entry in the whole history. Forward-dated runs were right by luck, but
+  re-running an older day compared it against a *later* report ("Δ vs 2026-11-08" on a Nov 7
+  report) and treated that later day's signatures as already seen, so nothing could be flagged
+  NEW. `$prev` derives from `$prior`, so the one filter governs both the deltas and NEW detection.
+  Applies to any back-fill over a dated history file: exclude the current date **and** everything
+  after it.
+- **A re-run over an old day is cheap and safe, so prefer it to editing a report.** `-Date` plus
+  `-NoFetch` re-reports a day from the archive; `Save-DigestHistory` replaces the same-date entry
+  and re-sorts, so no duplicate history row appears, and the digest is deterministic (identical
+  line/warning counts on re-run). `-Force` is needed only when the content is unchanged *and* it
+  is the most recent run.
 - **FTP directory listings on titan7 return stale metadata — never trust them.** 2026-10-31:
   `ls /System/*.log` reported `server.log` as 17,730 bytes modified Oct 31 03:05 while the actual
   download was 378,178 bytes with log activity through 12:44. Sizes and mtimes from a listing are
@@ -229,6 +305,31 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-11-09 — Verification pass over `open-items.md` items 1–13 plus a trend fix and the doc
+  update (`fix/trend-baseline-backfill`). **Code:** `Get-Trend`'s baseline filter `-ne` -> `-lt`
+  so a back-filled report compares against the newest *earlier* day (it had rendered
+  "Δ vs 2026-11-08" on a Nov 7 report); `Register-DailyTask.ps1` now registers the hourly
+  `-ArchiveOnly` task as well as the 01:30 daily one (`-HourlyTaskName`, `-HourlyMinute`,
+  `-NoHourly`; `-Unregister` removes both), default `-Time` 07:30 -> 01:30. **Verified closed:**
+  the merged Nov 8 report (2 sessions, 2 shutdown rows, correct spans); the hourly archive task
+  (every `:15` exit 0, supersede fired 34,114 -> 66,882); the hourly fetch catching a session that
+  never rotated; the duplicate-run guard in BOTH directions (unchanged digest -> exit 0 with no API
+  call; lowered line count -> passes through to render), tested against real state in a redirected
+  scratchpad so a failure could not spend a call; the old `ANTHROPIC_API_KEY` User env var, which
+  no longer exists in any scope (User/Machine/Process) with both analyzers on
+  `UT99_ANALYZER_API_KEY`. **Reports regenerated:** Nov 7 (was built from a 66,882-byte partial
+  capture — 1,201 lines / 1 player; now the full 2,344,258-byte session, 39,447 lines / 22h46m /
+  43 players / peak 18) and Nov 8 (true deltas vs Nov 7: -5 warnings, -27 script warnings, instead
+  of the inflated +332/+74 measured against the partial Nov 7). **Deferred:** the 14-day cleanup of
+  run logs and WinSCP XMLs (167 + 172 files, ~48/day). **Outstanding user actions:**
+  `-forcelogflush` on the server command line, and the NFO support question about `/System/*.log`.
+- 2026-11-08 — Shutdowns section added to the report (`Get-ShutdownEvents`): one row per server
+  start giving what the server was down by, its last log activity, and the reason if logged.
+- 2026-11-08 — One report per day, merged from the archive: every archived session whose
+  "Log file open" date matches the report date is merged into a single report with a Sessions row
+  per session, replacing "analyze whichever session is newest" and implementing what
+  `Capture Manual Restarts.md` only sketched. Hourly `-ArchiveOnly` scheduled task added (first run
+  18:15) so a session that never rotates is still captured.
 - 2026-10-31 — Live-log fetch + supersede-archiving + duplicate-run guard (`fix/live-log-fetch-and-dedupe`). `Invoke-ServerFetch` now fetches BOTH `/System/server-old.log` (WARN if absent) and `/System/server.log` via the new `Get-RemoteSessionLog`, archives both through the new `Save-SessionArchive`, and analyzes the newest session; `Invoke-RotatedLogFetch` and the `FetchSource`/`RemoteLogFolder`/`RemoteLogMask`/`DeleteAfterDownload` keys deleted; never-overwrite replaced by a supersede rule (longer capture of the same session wins); content-keyed guard added before the API call plus a new `-Force`; `session_open` added to `last-run.json`. Verified against the live server with state+output redirected to a scratchpad and no API calls: offline digest of the Oct 31 live log (6,668 lines, report dated 2026-10-31), real fetch (server-old WARN, archived `server.20261031_0305.log`), guard fires on unchanged re-run, supersede replaced a shortened archive (28,006 -> 378,178), `-Force` bypasses. The guard was broken on first write (see the `ConvertFrom-Json` convention) and fixed before commit. API path not yet exercised under the new code — first live run is the 07:30 scheduled task on 2026-11-01.
 - 2026-10-31 — Docs/memory audit only (no code change): recorded the fallback-fetch re-analysis root cause and the intermittent missing `/System/server-old.log` as a WATCH item; corrected two stale notes (scheduled runs on `UT99_ANALYZER_API_KEY` now confirmed; fallback path no longer "not live-tested").
 - 2026-10-15 — API key env var renamed `ANTHROPIC_API_KEY` -> `UT99_ANALYZER_API_KEY` in `Setup.ps1`, the main script and `Register-DailyTask.ps1` comments (same fix as the ChatLog Analyzer). Re-ran `Setup.ps1` to store the new var; verified offline with `-NoFetch -LogFile` on `server.20261013_0445.log` (exit 0, report `2026-10-13` written). Scheduled 07:30 runs on the new var confirmed working daily from 2026-10-16 through 2026-10-31 (live API calls completing). Old `ANTHROPIC_API_KEY` User var still to be removed once all projects are migrated (open decision).
