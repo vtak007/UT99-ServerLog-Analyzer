@@ -13,9 +13,9 @@
 | 7 | Daily task ran twice on 2026-11-09 | Open — one unexplained API call |
 | 8 | Empty signature keys in Changes Since Last Run | Open — cosmetic |
 | 9 | 14-day cleanup of run logs and WinSCP XMLs | Deferred 2026-11-09 |
-| 10 | NFO support question | Draft ready — waiting to send |
-| 11–14 | Known limitations | Accepted, no action |
-| 15–17 | Git actions | Outstanding |
+| 10 | NFO support message (3 questions) | Draft ready — waiting to send |
+| 11–15 | Known limitations | Accepted, no action |
+| 16–18 | Git actions | Outstanding |
 
 ## VERIFY
 
@@ -55,10 +55,14 @@
 
 9. Add a 14-day cleanup of old run logs and WinSCP XML files — **deferred 2026-11-09**. Current
    volume: 167 run logs (713 KB) and 172 XMLs (685 KB) back to 2026-08-03, growing ~48 files a day.
-10. Send the NFO support question (draft prepared 2026-11-09), now covering **two** things: whether
-    their restart wrapper or control-panel stop/start touches `/System/*.log` (a yes closes item 5),
-    and whether there is any way to pass the engine switch `-forcelogflush` on the server command
-    line, since the "starting line" field rejects dashes and spaces (closes item 2).
+10. Send the NFO support message (drafted 2026-11-09), covering three things:
+    1. Whether their restart wrapper or control-panel stop/start touches `/System/*.log` — a yes
+       closes item 5.
+    2. Whether there is any way to pass the engine switch `-forcelogflush` on the server command
+       line, given that the "starting line" field rejects dashes and spaces — closes item 2.
+    3. **Low priority:** whether their `/Logs/server.yyyymmdd_hhmm.log` rotation script can be
+       revived. Not required (see item 13), but it is the only thing that would close the
+       restart-storm gap in item 14.
 
 ## BLOCKED
 
@@ -69,14 +73,23 @@ None.
 11. Play between the 01:30 run and the next restart is left out of that day's report.
 12. A shutdown caused from outside (NFO restart or control panel) logs no reason, so those rows
     read "No reason logged".
-13. A server start that was never archived leaves no record, so its session and shutdown cannot be
-    reported.
-14. The Oct 30 2026 session (Oct 30 → Oct 31 03:05) is lost permanently; it is not on the server or
-    in `Raw Server Logs\`.
+13. NFO's `/Logs/server.*.log` rotation script has produced nothing since
+    `server.20261001_1748.log` and is **not required** — every archive and report since
+    2026-10-03 comes from `/System/server-old.log` plus the live `/System/server.log`, and the
+    current code contains no reference to `/Logs/`. Do not re-investigate it as broken
+    infrastructure; it is a dead redundancy, requested back only as item 10.3.
+14. A restart storm faster than the hourly archive task loses the intermediate sessions: only the
+    session live at `:15` is captured, and the rest are overwritten in `server-old.log` before any
+    fetch sees them. Precedent: the 2026-09-27 crash loop produced 132 sessions in about two hours,
+    which NFO's per-restart `/Logs/` script caught and an hourly fetch would not. Accepted unless
+    item 10.3 is granted.
+15. A server start that was never archived leaves no record, so its session and shutdown cannot be
+    reported. The Oct 30 2026 session (Oct 30 → Oct 31 03:05) is lost permanently this way, and
+    the pre-2026-08-23 `/Logs/` files have since been aged off the server.
 
 ## Git Actions Outstanding
 
-15. Merge `fix/trend-baseline-backfill` to `main` on your go-ahead. It was branched from
+16. Merge `fix/trend-baseline-backfill` to `main` on your go-ahead. It was branched from
     `feature/merge-day-sessions`, so this one merge brings both.
-16. Delete `fix/trend-baseline-backfill` and `feature/merge-day-sessions` after the merge.
-17. Push `main` on your go-ahead.
+17. Delete `fix/trend-baseline-backfill` and `feature/merge-day-sessions` after the merge.
+18. Push `main` on your go-ahead.

@@ -153,6 +153,20 @@ See `CLAUDE.md` for project-specific details.
 
 ## PROJECT CONVENTIONS
 
+- **An archive's filename does NOT tell you which side produced it.** `Save-SessionArchive` names
+  every local archive `server.yyyymmdd_hhmm.log` from the log's own "Log file open" time — the same
+  pattern NFO's `/Logs/` rotation script used, so the two are indistinguishable by name. Provenance
+  of `Raw Server Logs\` as of 2026-11-09: **2026-08-07 → 08-22** (17 files) no longer on the server
+  at all; **08-23 → 10-01** (39) from NFO's `/Logs/` script; **10-03 → 11-09** (24+) from
+  `/System/server-old.log` plus the live `/System/server.log` under the current code. Determine
+  provenance by comparing against a `/Logs/` listing, never by the name.
+- **We have never deleted anything from the server.** Every fetch is a plain `get`; the old
+  `DeleteAfterDownload` key was `$false` in every version that had it, and the code only passed
+  WinSCP's `-delete` when it was true. Confirmed 2026-11-09 when the `/Logs/` files stopping was
+  suspected to be our doing: all 196 sessions from Aug 23 to Oct 1 are still on the server,
+  including 116 we never downloaded, and `/Logs/` went quiet on 2026-10-01, three days *before* the
+  2026-10-04 source switch. The gap is explained by the old `get -latest`, which fetched only the
+  single newest match per run — anything that rotated between two runs was never fetched.
 - **A trend/history baseline is the newest EARLIER dated entry — filter with `-lt`, never `-ne`.**
   2026-11-09: `Get-Trend` selected `$_.date -ne $curDateStr`, then sorted by date and took the
   last, i.e. the newest entry in the whole history. Forward-dated runs were right by luck, but
