@@ -13,11 +13,16 @@ the sibling **UT99 ChatLog Analyzer** (same WinSCP saved-session + Anthropic API
 
 ## What it produces
 
-Each run writes two files to `D:\Dropbox\Gaming\UTLogs\ServerLogs`:
+Each run writes to `D:\Dropbox\Gaming\UTLogs\ServerLogs`:
 
-- `Raw Server Logs\server.yyyymmdd_hhmm.log` — the downloaded log, archived under its
-  original server-side name (kept separate from the reports below).
-- `FMJ Server Log Analysis <date>.md` — the report.
+- `Raw Server Logs\server.yyyymmdd_hhmm.log` — one archive per server session, named from the
+  log's own "Log file open" time (kept separate from the reports below). Both the previous and
+  the live session log are fetched every run, so a run can archive more than one. A longer
+  capture of a session that is still running supersedes the shorter one already archived. This
+  folder is a **permanent archive** — nothing deletes from it.
+- `FMJ Server Log Analysis <date>.md` — the report. One report per **day**: every archived
+  session that opened on that date is merged into it, so a day with several restarts still
+  produces a single report.
 
 The report contains:
 
@@ -25,7 +30,13 @@ The report contains:
   coverage window's endpoints live here — `log_first_entry` / `log_last_entry` — and only the
   elapsed span is repeated in the dashboard.
 - **Executive summary** and an overall status callout (Healthy / Minor Issues / Needs Attention / Critical).
-- **Health Dashboard** with day-over-day deltas, opening with a `Log covers` span row.
+- **Sessions** — one row per server session merged into the report (opened, last entry, length,
+  players, maps, hard errors, warnings, script warnings). Omitted when the day held one session.
+- **Shutdowns** — what ended before each server start in the report: when the server was down by,
+  its last log activity, and the reason if one was logged. A shutdown caused from outside (NFO
+  restart or control panel) logs no reason, so those rows read "No reason logged".
+- **Health Dashboard** with day-over-day deltas, opening with a `Log covers` span row. Deltas are
+  against the most recent **earlier** report, so re-running an old day still compares backwards.
 - **Changes Since Last Run** — brand-new and resolved issue signatures.
 - **Findings** — severity-ranked (`Critical`/`High`/`Medium`/`Low`), each with evidence,
   root cause, and a proposed solution, using Obsidian callouts. Two config lists drop findings
@@ -55,10 +66,13 @@ so the `.md` reads as a table in a plain-text view, not only through a renderer.
    restart, but it is **not reliably present**, so a failed fetch is only a warning) and
    `/System/server.log` (the live session, which exists whenever the server is running and is
    therefore the dependable source). Each copy is archived in `Raw Server Logs\` as
-   `server.yyyymmdd_hhmm.log`, named from the log's own "Log file open" time, and the **newest**
-   session is the one analyzed. Archiving both means a session is never lost even when it isn't the
-   one reported; an archived-but-unreported session is named in a `WARN` so it can be reported
-   later with `-LogFile`.
+   `server.yyyymmdd_hhmm.log`, named from the log's own "Log file open" time. Archiving both means
+   a session is never lost even when it isn't the one reported.
+
+   **What gets reported** is then chosen from the archive, not from the download: every session
+   that opened on the report date (default: yesterday, or `-Date`) is merged into one report, so a
+   day with several restarts produces a single report with a **Sessions** row per session rather
+   than one report per restart.
 
    If an archive for that session already exists, a **longer** fetched copy supersedes it (a
    growing capture of the same appended log is a strict superset); otherwise the existing archive
@@ -112,8 +126,11 @@ are shared.)
 .\"UT99 ServerLog Analyzer.ps1"
 
 # Archive only: save the fetched logs to the raw archive and exit (no analysis, no report).
-# Run this after a MANUAL server restart, before NFO's next restart overwrites server-old.log.
+# This is what the hourly scheduled task runs; costs nothing but bandwidth.
 .\"UT99 ServerLog Analyzer.ps1" -ArchiveOnly
+
+# Report a specific day: every archived session that opened on it is merged into one report.
+.\"UT99 ServerLog Analyzer.ps1" -NoFetch -Date 2026-11-08
 
 # Re-analyze even when nothing has changed since the last run (bypasses the duplicate-run guard).
 .\"UT99 ServerLog Analyzer.ps1" -Force
@@ -132,7 +149,7 @@ are shared.)
 | `-NoAnalysis` | Skip the Claude API call (deterministic tallies only, no cost). |
 | `-LogFile <path>` | Analyze a specific local log. Also bypasses the duplicate-run guard. |
 | `-Force` | Analyze even when the session and line count are unchanged since the last run. |
-| `-Date <yyyy-MM-dd>` | Force the report date (default: the log's own session date). |
+| `-Date <yyyy-MM-dd>` | The day to report: every archived session that opened on it is merged into one report (default: yesterday). With `-LogFile` it only labels the report. |
 
 > **Caution:** `-NoAnalysis` writes a real report file (just without the AI narrative) — if a
 > log's session date already has a real analyzed report, running `-NoAnalysis` against it
@@ -145,35 +162,42 @@ are shared.)
 ## Scheduling
 
 ```powershell
-# Register the daily task (requires an ELEVATED / Run-as-Administrator PowerShell).
+# Register BOTH tasks (requires an ELEVATED / Run-as-Administrator PowerShell).
 .\Register-DailyTask.ps1
 
-# Remove it.
+# Remove them.
 .\Register-DailyTask.ps1 -Unregister
 ```
 
-The task runs **daily at 07:30** (NFO's nightly restart currently lands at ~07:00, rotating the
-finished session into `server-old.log`). Run earlier and `server-old.log` is still the session
-*before* the one that just ended, so reports lag a session behind.
-It is registered to **run whether you are logged on or not**, with **highest privileges**
+Two tasks do the work:
+
+| Task | When | What |
+|---|---|---|
+| `UT99 ServerLog Analyzer - Daily` | daily at **01:30** | Full run: fetch, merge the previous day's sessions, analyze, write the report. |
+| `UT99 ServerLog Analyzer - Hourly Archive` | every hour at **:15** | `-ArchiveOnly`: fetch and archive both session logs. No digest, no API call, no report. |
+
+The hourly task is what makes a session impossible to lose. The live `server.log` is buffered
+server-side and `/System/server-old.log` is only *sometimes* created at a restart, so an hourly
+capture is the only thing that guarantees a session which never rotates is still archived. Because
+the daily run then merges whole days out of that archive, **it no longer has to be timed against a
+restart** — which is why 01:30 replaced the old 07:30 slot chosen to follow NFO's ~07:00 restart.
+
+Both are registered to **run whether you are logged on or not**, with **highest privileges**
 (S4U + RunLevel Highest) — which is why registration needs an elevated shell.
 
-> **Keep the run and its retries off 05:00.** A separate "Daily Restart" task force-reboots the
-> machine (`shutdown /r /f`) at 05:00 every 3 days and will kill the run mid-fetch. 07:30 and its
+> **Keep the daily run and its retries off 05:00.** A separate "Daily Restart" task force-reboots
+> the machine (`shutdown /r /f`) at 05:00 every 3 days and will kill a run mid-fetch. 01:30 and its
 > 30-minute retry grid clear that.
->
-> **Manual restarts:** a restart you do yourself also overwrites `server-old.log`, so a second
-> restart (NFO's) before the analyzer runs destroys the first session's log. Run
-> `-ArchiveOnly` between the two restarts to keep it. See `Capture Manual Restarts.md` for the
-> idea of merging archived sessions into one report (not implemented).
 
-If a run fails (server unreachable, no network, WinSCP login failure), Windows Task Scheduler
-**retries every 30 minutes** (count set by `-RetryCount`) until it succeeds. If `server-old.log`
-hasn't changed since the last run (no restart), the run log notes it and the report repeats that
-session. This is implemented via restart-on-failure: the script exits non-zero on any
-fetch failure.
+If the daily run fails (server unreachable, no network, WinSCP login failure), Windows Task
+Scheduler **retries every 30 minutes** (count set by `-RetryCount`) until it succeeds, implemented
+via restart-on-failure: the script exits non-zero on any fatal fetch failure. The hourly task has
+no retry — the next hour is the retry. A daily run whose session and line count are both unchanged
+since the last run exits 0 before the API call (see the duplicate-run guard), so a quiet day costs
+nothing.
 
-Adjust with `-Time`, `-RetryIntervalMinutes`, and `-RetryCount`.
+Adjust with `-Time`, `-HourlyMinute`, `-RetryIntervalMinutes`, `-RetryCount`, or register only the
+daily task with `-NoHourly`.
 
 ---
 
@@ -201,7 +225,7 @@ All settings live in `_system\config.ps1`. Key values:
 | `_system\config.ps1` | All user-facing settings |
 | `_system\Bin\UT99 ServerLog Analyzer.ps1` | Main pipeline: fetch → digest → analysis → report |
 | `_system\Bin\Setup.ps1` | One-time setup / validation |
-| `_system\Bin\Register-DailyTask.ps1` | Scheduled-task registration |
+| `_system\Bin\Register-DailyTask.ps1` | Scheduled-task registration (both the daily and the hourly archive task) |
 | `_system\State\digest-history.json` | Trend history (day-over-day diffing) |
 | `_system\State\last-run.json` | Last-run metrics |
 | `FUTURE-FEATURES.md` | Backlog of deferred enhancements (4–9) |
@@ -210,6 +234,13 @@ All settings live in `_system\config.ps1`. Key values:
 
 ## Notes
 
+- **Run the server with `-forcelogflush`.** Without it UT99 buffers its log in ~16 KB blocks, so
+  the copy on the server — and therefore every fetch — stops short of what has actually happened,
+  and the final partial block is lost outright when the process is killed at a restart. That is
+  why a report's "Last log activity" can sit 45–60 minutes before the restart that ended the
+  session. Measured locally on 2026-11-09: of a server's startup output, **22 lines** reached disk
+  without the flag versus **75 lines** with it, the rest lost on kill. Cost is one disk write per
+  log line, which is nothing at UT99's few-lines-per-second rate.
 - Player IP addresses (PII) appear in the downloaded log and the report, which stay local in
   Dropbox. The digest sent to the API includes IP *counts*, not raw IP lists.
 - Token usage is bounded by the deduplicated digest, so even very large logs cost roughly the

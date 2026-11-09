@@ -1,58 +1,87 @@
 <#
 .SYNOPSIS
-    Registers a Windows Task Scheduler entry that runs UT99 ServerLog Analyzer daily.
+    Registers the two Windows Task Scheduler entries that drive UT99 ServerLog Analyzer:
+    a daily analysis run and an hourly archive-only run.
 
 .DESCRIPTION
-    Creates a scheduled task named "UT99 ServerLog Analyzer - Daily" that runs at the
-    chosen local time, every day, in your current Windows user context (so it has
-    access to the saved WinSCP session and the UT99_ANALYZER_API_KEY env var).
+    Creates both scheduled tasks in your current Windows user context (so they have
+    access to the saved WinSCP session and the UT99_ANALYZER_API_KEY env var):
 
-    Pick a time AFTER the server's nightly log rotation produces server-old.log.
+      "UT99 ServerLog Analyzer - Daily"           full run: fetch, analyze, write the report
+      "UT99 ServerLog Analyzer - Hourly Archive"  -ArchiveOnly: fetch and archive, nothing else
+
+    The hourly task is what makes a session impossible to lose. The live server.log is
+    buffered server-side and /System/server-old.log is only sometimes created at a restart,
+    so an hourly capture is the only thing guaranteeing that a session which never rotates
+    is still archived. The daily run then merges every archived session that opened on the
+    report date into one report, so it no longer has to be timed against a restart.
 
 .PARAMETER Time
-    Local time to run, in HH:mm 24-hour format. Default 07:30 (the FMJ server's
-    nightly restart currently lands at ~07:00, rotating server.log to
-    server-old.log; 07:30 also stays clear of the 05:00 'Daily Restart' reboot).
+    Local time of the daily analysis run, in HH:mm 24-hour format. Default 01:30, which
+    reports the previous day once its play has finished and stays clear of the 05:00
+    'Daily Restart' reboot of this machine. It no longer needs to follow the server's
+    nightly restart: the hourly archive task captures sessions as they run, and the daily
+    run reports whole days from the archive.
 
 .PARAMETER RetryIntervalMinutes
-    If a run fails (the log doesn't exist yet because the server hasn't booted,
-    or there is no network connection), Task Scheduler restarts the task after
-    this many minutes. Default 30.
+    If a run fails (no network connection, or the server is unreachable), Task Scheduler
+    restarts the task after this many minutes. Default 30.
 
 .PARAMETER RetryCount
     How many times to restart after a failure before giving up until the next
-    day's trigger. Default 12 (so 07:30 + 12 x 30 min covers until ~13:30).
+    day's trigger. Default 12 (so 01:30 + 12 x 30 min covers until ~07:30).
 
 .PARAMETER StartDate
     Optional date (yyyy-MM-dd) on which the daily trigger begins. Defaults to today.
 
 .PARAMETER TaskName
-    Name of the scheduled task. Default "UT99 ServerLog Analyzer - Daily".
+    Name of the daily task. Default "UT99 ServerLog Analyzer - Daily".
+
+.PARAMETER HourlyTaskName
+    Name of the hourly archive task. Default "UT99 ServerLog Analyzer - Hourly Archive".
+
+.PARAMETER HourlyMinute
+    Minute past each hour for the archive run, 0-59. Default 15.
+
+.PARAMETER NoHourly
+    Register only the daily task and leave the hourly archive task alone.
 
 .PARAMETER Unregister
-    Remove an existing task with this name.
+    Remove both tasks (or only the daily one with -NoHourly).
 
 .EXAMPLE
-    .\Register-DailyTask.ps1 -Time 07:30
+    .\Register-DailyTask.ps1
+    # Daily analysis at 01:30 plus the hourly archive run at :15.
+
+.EXAMPLE
+    .\Register-DailyTask.ps1 -Time 02:00 -HourlyMinute 45
 #>
 [CmdletBinding()]
 param(
-    [string] $Time                 = '07:30',
+    [string] $Time                 = '01:30',
     [int]    $RetryIntervalMinutes = 30,
     [int]    $RetryCount           = 12,
     [string] $StartDate            = '',
     [string] $TaskName             = 'UT99 ServerLog Analyzer - Daily',
+    [string] $HourlyTaskName       = 'UT99 ServerLog Analyzer - Hourly Archive',
+    [ValidateRange(0,59)]
+    [int]    $HourlyMinute         = 15,
+    [switch] $NoHourly,
     [switch] $Unregister
 )
 
 $ErrorActionPreference = 'Stop'
 
 if ($Unregister) {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Host "Task '$TaskName' removed." -ForegroundColor Green
-    } else {
-        Write-Host "No task named '$TaskName' found." -ForegroundColor Yellow
+    $targets = @($TaskName)
+    if (-not $NoHourly) { $targets += $HourlyTaskName }
+    foreach ($t in $targets) {
+        if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $t -Confirm:$false
+            Write-Host "Task '$t' removed." -ForegroundColor Green
+        } else {
+            Write-Host "No task named '$t' found." -ForegroundColor Yellow
+        }
     }
     return
 }
@@ -107,7 +136,7 @@ $settings  = New-ScheduledTaskSettingsSet `
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
 
 $task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-        -Description "Downloads the FMJ server's server-old.log via WinSCP, analyzes it with Claude, and writes a daily Obsidian markdown report."
+        -Description "Fetches the FMJ server's session logs via WinSCP, merges every archived session that opened on the report date, analyzes them with Claude, and writes an Obsidian markdown report."
 
 # Replace existing
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -120,12 +149,54 @@ Write-Host ""
 Write-Host "Task '$TaskName' registered." -ForegroundColor Green
 Write-Host "  First run: $($startDT.ToString('yyyy-MM-dd')) at $Time"
 Write-Host "  Runs daily thereafter at $Time"
-Write-Host "  On failure (log not created yet / no network): retries every $RetryIntervalMinutes min, up to $RetryCount times"
+Write-Host "  On failure (no network / server unreachable): retries every $RetryIntervalMinutes min, up to $RetryCount times"
 Write-Host "  Uses: $pwsh"
 Write-Host "  Script: $MainScript"
+
+# ------------------------------------------------------------------------- #
+#  Hourly archive-only task                                                  #
+# ------------------------------------------------------------------------- #
+# -ArchiveOnly fetches both session logs and archives them under their own
+# "Log file open" names, then exits - no digest, no API call, no report, so an
+# hourly cadence costs nothing but bandwidth. This is what guarantees a session
+# is captured even when /System/server-old.log is never created for it.
+if (-not $NoHourly) {
+    $hourlyArgs    = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -ArchiveOnly' -f $MainScript
+    $hourlyAction  = New-ScheduledTaskAction -Execute $pwsh -Argument $hourlyArgs -WorkingDirectory $BinDir
+
+    # A -Once trigger with a repetition interval and no duration repeats indefinitely.
+    $hourlyStart   = (Get-Date -Minute $HourlyMinute -Second 0 -Millisecond 0)
+    $hourlyTrigger = New-ScheduledTaskTrigger -Once -At $hourlyStart -RepetitionInterval (New-TimeSpan -Hours 1)
+
+    # No restart-on-failure: the next hour's run is the retry. Shorter time limit than the
+    # daily task because there is no API call to wait on.
+    $hourlySettings = New-ScheduledTaskSettingsSet `
+                        -StartWhenAvailable `
+                        -DontStopIfGoingOnBatteries `
+                        -AllowStartIfOnBatteries `
+                        -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+
+    $hourlyTask = New-ScheduledTask -Action $hourlyAction -Trigger $hourlyTrigger -Settings $hourlySettings `
+                    -Principal $principal `
+                    -Description "Hourly -ArchiveOnly run: downloads /System/server-old.log and the live /System/server.log and archives both under their session-open names. No analysis, no API call."
+
+    if (Get-ScheduledTask -TaskName $HourlyTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $HourlyTaskName -Confirm:$false
+    }
+    Register-ScheduledTask -TaskName $HourlyTaskName -InputObject $hourlyTask | Out-Null
+
+    Write-Host ""
+    Write-Host "Task '$HourlyTaskName' registered." -ForegroundColor Green
+    Write-Host "  Runs every hour at :$('{0:00}' -f $HourlyMinute), archive-only (no API call)"
+    Write-Host "  First run: $($hourlyStart.ToString('yyyy-MM-dd HH:mm'))"
+}
+
 Write-Host ""
-Write-Host "To run it manually right now:"              -ForegroundColor Cyan
+Write-Host "To run them manually right now:"            -ForegroundColor Cyan
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Gray
+if (-not $NoHourly) {
+    Write-Host "  Start-ScheduledTask -TaskName '$HourlyTaskName'" -ForegroundColor Gray
+}
 Write-Host ""
-Write-Host "To remove it later:" -ForegroundColor Cyan
+Write-Host "To remove them later:" -ForegroundColor Cyan
 Write-Host "  .\Register-DailyTask.ps1 -Unregister"   -ForegroundColor Gray
