@@ -36,10 +36,16 @@
    archives carries a `Log file closed` marker, so there is no variation to correlate against.
    No longer a data-loss risk — the hourly task captures the session either way.
 5. Whether `server-old.log` going missing tracks manual vs NFO-initiated restarts.
-6. The Daily task ran twice on 2026-11-09 — 01:30 (scheduled) and again at 05:10:25, which Task
-   Scheduler records as that task's last run. Both analyzed Nov 8, so the second was a second paid
-   API call. Confirm whether you triggered it from Task Scheduler; if not, find what re-fired it
-   (the retry grid off 01:30 would land on :00/:30, so 05:10 does not fit it).
+6. The Daily task (`UT99 ServerLog Analyzer - Daily`) ran twice on 2026-11-09 — 01:30 (scheduled)
+   and again at 05:10:25, which Task Scheduler records as that task's last run. Both analyzed
+   Nov 8, so the second was a second paid API call. **Cause unrecoverable:** the
+   `Microsoft-Windows-TaskScheduler/Operational` log was disabled, so no history was kept; it was
+   **enabled 2026-11-09** (`wevtutil sl ... /e:true`), so a recurrence will now be recorded —
+   event 110 names the account that launched it and 129 the process created. Ruled out already:
+   restart-on-failure (the 01:30 run succeeded, and its retry grid would land on :00/:30, with no
+   run logs at those times) and a missed-trigger catch-up (the 01:30 trigger fired). A manual
+   start is the likeliest explanation but is unproven. **Next check:** after tomorrow's 01:30 run,
+   `LastRunTime` reading 01:30 means today was one-off and this closes.
 7. Empty signature keys (`sw|`, `err|`, stored with count 0 in `digest-history.json`) surface in
    the report as a meaningless "1 signature(s) resolved" line reading `` `sw¦` ``. Cosmetic; fix is
    to skip zero-count/empty keys when building the signature map.
