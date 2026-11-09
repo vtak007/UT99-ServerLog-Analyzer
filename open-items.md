@@ -14,7 +14,7 @@
 | 8 | 14-day cleanup of run logs and WinSCP XMLs | Deferred 2026-11-09 |
 | 9 | NFO support message (3 questions) | Draft ready — waiting to send |
 | 10–15 | Known limitations | Accepted, no action |
-| 16–18 | Git actions | Outstanding |
+| — | Git actions | None outstanding |
 
 ## VERIFY
 
@@ -90,7 +90,5 @@ None.
 
 ## Git Actions Outstanding
 
-16. Merge `fix/trend-baseline-backfill` to `main` on your go-ahead. It was branched from
-    `feature/merge-day-sessions`, so this one merge brings both.
-17. Delete `fix/trend-baseline-backfill` and `feature/merge-day-sessions` after the merge.
-18. Push `main` on your go-ahead.
+None. (2026-11-09: `fix/trend-baseline-backfill` merged to `main` as `def60eb`, carrying
+`feature/merge-day-sessions`; both branches deleted; `main` pushed to `origin`.)
