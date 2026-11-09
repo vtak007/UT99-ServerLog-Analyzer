@@ -294,7 +294,9 @@ function Get-ShutdownEvents {
         ended, so its "Log file open" time is the "down by" time. The session before the
         first one is read from the previous archive. A reason exists only when the server
         stopped itself (crash text, or a clean "Log file closed"); an outside kill leaves
-        nothing, and its last 16 KB of log is lost, so LastActivity can be hours early.
+        nothing. LastActivity always reads early and this is NOT downtime: the final partial
+        16 KB block (~280 lines) is never flushed, which spans ~40 minutes of an idle server
+        or seconds of a busy one. Only -forcelogflush on the server fixes it.
     #>
     param([Parameter(Mandatory)]$Digest, [Parameter(Mandatory)][string[]]$SourceLogs)
 
@@ -1076,7 +1078,7 @@ function New-ServerLogReport {
         }
         $null = $sb.Append((Format-MdTable -Headers @('Down by','Last log activity','Reason') -Aligns @('L','L','L') -Rows $shutRows))
         $null = $sb.Append($A)
-        $null = $sb.Append('> [!note] "Down by" is the next server start, or the exact time when the server closed its own log. "No reason logged" usually means the server was stopped from outside (NFO restart or control panel), and its last log activity can be hours early.'+$A+$A)
+        $null = $sb.Append('> [!note] "Down by" is the next server start, or the exact time when the server closed its own log. "No reason logged" means no shutdown reason was recorded, which is normal when the server is stopped from outside the game (NFO restart or control panel). **"Last log activity" is expected to read early and is not downtime:** UT99 buffers its log in ~16 KB blocks and the final partial block is lost when the process is killed, so the last ~280 lines of every session never reach disk. The gap is wide when the server was idle (a quiet 16 KB can span ~40 minutes) and near zero when it was busy.'+$A+$A)
     }
 
     # --- Health dashboard ---
