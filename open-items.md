@@ -11,7 +11,6 @@
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
 | 8–13 | Known limitations                                  | Accepted, no action                              |
-| 14   | Push `main` to `origin`                            | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -87,4 +86,4 @@ None.
 
 ## Git Actions Outstanding
 
-14. Push `main` to `origin` on your go-ahead (carries the docs and empty-signature-key commits).
+None.
