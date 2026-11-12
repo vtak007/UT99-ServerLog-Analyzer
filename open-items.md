@@ -5,30 +5,17 @@
 | #    | Item                                               | Status                                           |
 | ---- | -------------------------------------------------- | ------------------------------------------------ |
 | 1    | Report for a day with 3+ restarts                  | Open — waiting on such a day                     |
-| 2    | `Register-DailyTask.ps1` registering both tasks    | Deferred 2026-11-10 — prep done, run outstanding |
 | 3    | Why `/System/server-old.log` goes missing          | Open — closes via item 7                         |
 | 4    | Does it track manual vs NFO restarts               | Open — needs more restarts                       |
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
 | 8–13 | Known limitations                                  | Accepted, no action                              |
+| 15   | Merge `docs/close-item-2` and push                 | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
 1. First report for a day with three or more restarts: Sessions table is correct, and the AI does
    not call short or no-player sessions crashes. Two-session days verified 2026-11-09 (Nov 3, Nov 8).
-2. `Register-DailyTask.ps1` now registers the hourly archive task as well as the daily one. Run it
-   once from an **elevated** shell and confirm it reproduces the live schedule (daily 01:30, hourly
-   at :15 with `PT1H` repetition). The trigger it builds was verified to match the live task, but
-   registration itself has not been exercised; the working tasks were deliberately left in place.
-   **Deferred 2026-11-10 to a later session** — prep is done: both live tasks exported to
-   `%TEMP%\ut99-daily.xml` and `%TEMP%\ut99-hourly.xml` (restore with
-   `schtasks /create /tn "<name>" /xml "<file>"`), and the elevated shell was confirmed
-   (`IsInRole('Administrators')` -> True). Re-export the XMLs before the run if `%TEMP%` has
-   been cleaned since. **Why elevation is mandatory:** the script `Unregister`s each task
-   *before* `Register`ing it, and its S4U + `RunLevel Highest` principal needs elevation, so a
-   non-elevated run deletes the working task and then fails with "Access is denied". Expect
-   `LastRunTime` to reset to never on both tasks and the hourly `-Once` trigger's start to move
-   to :15 of the current hour (the `PT1H` repetition keeps the cadence).
 
 ## WATCH
 
@@ -86,4 +73,4 @@ None.
 
 ## Git Actions Outstanding
 
-None.
+15. Merge `docs/close-item-2` to `main` and push, on your go-ahead.
