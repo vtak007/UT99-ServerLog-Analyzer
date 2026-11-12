@@ -671,7 +671,8 @@ function Get-DigestSignatureMap {
     # Flatten the digest's top-N buckets into a "bucket|signature" -> count map.
     param($Digest)
     $m = [ordered]@{}
-    $add = { param($bucket, $list) foreach ($s in @($list)) { $m["$bucket|$($s.Signature)"] = [int]$s.Count } }
+    # @($null) is a one-element array, so an empty bucket would otherwise store "sw|" -> 0.
+    $add = { param($bucket, $list) foreach ($s in @($list)) { if ($s -and $s.Signature) { $m["$bucket|$($s.Signature)"] = [int]$s.Count } } }
     & $add 'err'  $Digest.Errors
     & $add 'sw'   $Digest.ScriptWarnings
     & $add 'warn' $Digest.Warnings
@@ -711,7 +712,8 @@ function Get-Trend {
     $newSigs = @($curSigs.Keys | Where-Object { -not $seen.Contains($_) })
     $resolved = @()
     if ($prev -and $prev.signatures) {
-        foreach ($p in $prev.signatures.PSObject.Properties) { if (-not $curSigs.Contains($p.Name)) { $resolved += $p.Name } }
+        # Skip empty keys ("sw|") already stored in older history entries.
+        foreach ($p in $prev.signatures.PSObject.Properties) { if ($p.Name -notmatch '\|$' -and -not $curSigs.Contains($p.Name)) { $resolved += $p.Name } }
     }
 
     $delta = {

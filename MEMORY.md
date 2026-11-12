@@ -150,6 +150,17 @@ See `CLAUDE.md` for project-specific details.
   download one player's taunt/skin pack and adds ACE-validation surface — not worth it. Disposition
   for these signatures in a report: **confirm benign, no action.** (Decided 2026-08-05 for the
   08-04 report; ELD was NEW that run, tied to player CHUPAMELA.)
+- **The Daily task's second run on 2026-11-09 at 05:10 was a ONE-OFF, not a scheduling fault — do
+  not re-engineer the trigger over it.** That day the task ran at 01:30 (scheduled) and again at
+  05:10:25, both analyzing Nov 8, so the second was a wasted paid API call. Ruled out at the time:
+  restart-on-failure (the 01:30 run exited 0, and its retry grid lands on :00/:30 with no run logs
+  there) and missed-trigger catch-up (the 01:30 trigger did fire). **Closed 2026-11-10:** with
+  `Microsoft-Windows-TaskScheduler/Operational` enabled, that night's history shows exactly one
+  launch of the Daily task — 107 (time trigger) / 129 (`pwsh.exe` PID 16872) / 100 (started as
+  `Strix007\Perdi`) / 200 / 201 (return code 0) / 102, all inside 01:30:01–01:30:54 — and there is
+  no 05:xx run log. `LastRunTime` read 01:30. A manual start remains the likeliest explanation for
+  Nov 9 and is unprovable (no history was kept then). The operational log is now the standing
+  instrument: if it recurs, events 110/100 name the launching account.
 
 ## PROJECT CONVENTIONS
 
@@ -304,6 +315,23 @@ See `CLAUDE.md` for project-specific details.
 ## CHANGE LOG
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
+
+- 2026-11-12 — `fix/empty-signature-keys`: `Get-DigestSignatureMap` no longer stores empty-signature
+  keys (`sw|`, `err|` -> 0) — `@($null)` is a one-element array, so an empty bucket produced one
+  entry. `Get-Trend` also skips keys ending in `|` when listing resolved signatures, covering
+  entries already in `digest-history.json`. Tested with `-NoFetch -NoAnalysis -Date 2026-11-10`
+  (no empty keys stored; resolved list real). Open items 6 and 7 stay deferred.
+- 2026-11-10 — Docs only (`docs/close-trend-and-double-run`): two open items closed against the
+  01:30 scheduled run. **Trend fix verified in production** — the unattended run reported
+  2026-11-09 and logged `Trend vs 2026-11-08` (warnings -251, scriptWarnings -49, 0 new
+  signatures), rendering `Value (Δ vs 2026-11-08)` and "21 signature(s) resolved since
+  2026-11-08", i.e. the newest *earlier* day, not a later one; 52s, exit 0, one API call.
+  **Double-run closed** as a Nov 9 one-off (see RULED-OUT THEORIES) now that the task-history
+  log is enabled and recorded a single clean launch. The empty-signature-key cosmetic bug did
+  not surface in that report (all 21 resolved keys real) — latent, not fixed.
+  `Register-DailyTask.ps1`'s first elevated registration run was prepped (live tasks exported
+  to `%TEMP%`, elevation confirmed) but **deferred** to a later session; note in `open-items.md`
+  why non-elevated is destructive there.
 
 - 2026-11-09 — Verification pass over `open-items.md` items 1–13 plus a trend fix and the doc
   update (`fix/trend-baseline-backfill`). **Code:** `Get-Trend`'s baseline filter `-ne` -> `-lt`
