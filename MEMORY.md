@@ -316,6 +316,10 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-11-12 — Docs only (`docs/close-item-2`): **`Register-DailyTask.ps1` verified.** Run from an
+  elevated shell, it registered both tasks; live state matched (daily 01:30, retry 30 min x12;
+  hourly start moved to :15 with `PT1H`; both `S4U/Highest`; `LastRunTime` reset to never). The
+  Downloads/`%TEMP%` XML backups are no longer needed once the first hourly run succeeds.
 - 2026-11-12 — `fix/empty-signature-keys`: `Get-DigestSignatureMap` no longer stores empty-signature
   keys (`sw|`, `err|` -> 0) — `@($null)` is a one-element array, so an empty bucket produced one
   entry. `Get-Trend` also skips keys ending in `|` when listing resolved signatures, covering
