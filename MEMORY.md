@@ -316,6 +316,11 @@ See `CLAUDE.md` for project-specific details.
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-11-12 — `fix/empty-signature-keys`: `Get-DigestSignatureMap` no longer stores empty-signature
+  keys (`sw|`, `err|` -> 0) — `@($null)` is a one-element array, so an empty bucket produced one
+  entry. `Get-Trend` also skips keys ending in `|` when listing resolved signatures, covering
+  entries already in `digest-history.json`. Tested with `-NoFetch -NoAnalysis -Date 2026-11-10`
+  (no empty keys stored; resolved list real). Open items 6 and 7 stay deferred.
 - 2026-11-10 — Docs only (`docs/close-trend-and-double-run`): two open items closed against the
   01:30 scheduled run. **Trend fix verified in production** — the unattended run reported
   2026-11-09 and logged `Trend vs 2026-11-08` (warnings -251, scriptWarnings -49, 0 new

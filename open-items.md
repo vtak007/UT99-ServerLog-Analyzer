@@ -2,17 +2,16 @@
 
 ## Status
 
-| # | Item | Status |
-|---|---|---|
-| 1 | Report for a day with 3+ restarts | Open — waiting on such a day |
-| 2 | `Register-DailyTask.ps1` registering both tasks | Deferred 2026-11-10 — prep done, run outstanding |
-| 3 | Why `/System/server-old.log` goes missing | Open — closes via item 7 |
-| 4 | Does it track manual vs NFO restarts | Open — needs more restarts |
-| 5 | Empty signature keys in Changes Since Last Run | Open — cosmetic |
-| 6 | 14-day cleanup of run logs and WinSCP XMLs | Deferred 2026-11-09 |
-| 7 | NFO support message (3 questions) | Draft ready — waiting to send |
-| 8–13 | Known limitations | Accepted, no action |
-| 14 | Commit this open-items update | Ready — waiting on branch + commit |
+| #    | Item                                               | Status                                           |
+| ---- | -------------------------------------------------- | ------------------------------------------------ |
+| 1    | Report for a day with 3+ restarts                  | Open — waiting on such a day                     |
+| 2    | `Register-DailyTask.ps1` registering both tasks    | Deferred 2026-11-10 — prep done, run outstanding |
+| 3    | Why `/System/server-old.log` goes missing          | Open — closes via item 7                         |
+| 4    | Does it track manual vs NFO restarts               | Open — needs more restarts                       |
+| 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
+| 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
+| 8–13 | Known limitations                                  | Accepted, no action                              |
+| 14   | Push `main` to `origin`                            | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -41,16 +40,12 @@
    archives carries a `Log file closed` marker, so there is no variation to correlate against.
    No longer a data-loss risk — the hourly task captures the session either way.
 4. Whether `server-old.log` going missing tracks manual vs NFO-initiated restarts.
-5. Empty signature keys (`sw|`, `err|`, stored with count 0 in `digest-history.json`) surface in
-   the report as a meaningless "1 signature(s) resolved" line reading `` `sw¦` ``. Cosmetic; fix is
-   to skip zero-count/empty keys when building the signature map. Did **not** appear in the
-   2026-11-09 report (all 21 resolved signatures had real keys), so it is latent, not fixed.
 
 ## DECIDE
 
 6. Add a 14-day cleanup of old run logs and WinSCP XML files — **deferred 2026-11-09**. Current
    volume: 167 run logs (713 KB) and 172 XMLs (685 KB) back to 2026-08-03, growing ~48 files a day.
-7. Send the NFO support message (drafted 2026-11-09), covering three things:
+7. Send the NFO support message (drafted 2026-11-09; **deferred 2026-11-12**), covering three things:
     1. Whether their restart wrapper or control-panel stop/start touches `/System/*.log` — a yes
        closes item 3.
     2. Whether there is any way to pass the engine switch `-forcelogflush` on the server command
@@ -92,7 +87,4 @@ None.
 
 ## Git Actions Outstanding
 
-14. Commit this `open-items.md` update (old items 2 and 6 closed) on `docs/close-trend-and-double-run`
-    and merge to `main` on your go-ahead. (2026-11-09: `fix/trend-baseline-backfill` merged to
-    `main` as `def60eb`, carrying `feature/merge-day-sessions`; both branches deleted; `main` pushed
-    to `origin`.)
+14. Push `main` to `origin` on your go-ahead (carries the docs and empty-signature-key commits).
