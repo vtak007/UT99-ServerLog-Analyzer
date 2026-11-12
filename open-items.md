@@ -9,7 +9,7 @@
 | 4    | Does it track manual vs NFO restarts               | Open — needs your manual-restart times           |
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
-| 8–13 | Known limitations                                  | Accepted, no action                              |
+| 17   | Merge `docs/known-limitations` and push            | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -48,33 +48,11 @@
 
 None.
 
-## ACCEPTED
+## Known limitations
 
-8. Play between the 01:30 run and the next restart is left out of that day's report.
-9. A shutdown caused from outside (NFO restart or control panel) logs no reason, so those rows
-   read "No reason logged".
-10. NFO's `/Logs/server.*.log` rotation script has produced nothing since
-    `server.20261001_1748.log` and is **not required** — every archive and report since
-    2026-10-03 comes from `/System/server-old.log` plus the live `/System/server.log`, and the
-    current code contains no reference to `/Logs/`. Do not re-investigate it as broken
-    infrastructure; it is a dead redundancy, requested back only as item 7.3.
-11. A restart storm faster than the hourly archive task loses the intermediate sessions: only the
-    session live at `:15` is captured, and the rest are overwritten in `server-old.log` before any
-    fetch sees them. Precedent: the 2026-09-27 crash loop produced 132 sessions in about two hours,
-    which NFO's per-restart `/Logs/` script caught and an hourly fetch would not. Accepted unless
-    item 7.3 is granted.
-12. A server start that was never archived leaves no record, so its session and shutdown cannot be
-    reported. The Oct 30 2026 session (Oct 30 → Oct 31 03:05) is lost permanently this way, and
-    the pre-2026-08-23 `/Logs/` files have since been aged off the server.
-13. The last ~280 lines of every session are never flushed to disk, so "Last log activity" always
-    reads early — ~40 minutes on an idle server, seconds on a busy one. `-forcelogflush` is the
-    only fix and NFO's panel will not accept it (the "starting line" field refuses dashes and
-    spaces; there is no `.ini` equivalent). **Not a blocker:** the loss is trailing idle traffic,
-    and the Shutdowns note now says so explicitly rather than blaming an outside shutdown. The one
-    case it would matter is diagnosing a crash, since the explanatory lines would be exactly the
-    unflushed ones — recent reports show 0 hard errors. Still requested as item 7.2; if NFO grants
-    it, verify that a Shutdowns row's "Last log activity" lands within seconds of "Down by".
+Items 8–13 are known limitations, not open work. They live in `CLAUDE.md` under
+**Known limitations** (numbering kept so references here still resolve).
 
 ## Git Actions Outstanding
 
-None.
+17. Merge `docs/known-limitations` to `main` and push, on your go-ahead.
