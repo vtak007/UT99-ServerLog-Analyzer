@@ -1,0 +1,6 @@
+# Line endings. The index always stores LF; these rules fix the working-copy ending so
+# edits and branch switches don't leave files falsely "modified" under core.autocrlf=true.
+* text=auto
+*.md  text eol=lf
+*.ps1 text eol=crlf
+.gitattributes text eol=lf
