@@ -23,6 +23,9 @@ of the same task (per global doc-update gating: after tested + approved).
 | `_system\State\winscp-*.xml` | Per-fetch WinSCP session logs |
 | `_system\Runlogs\run-*.log` | Per-run text logs |
 | `README.md` (project root) | User documentation |
+| `MEMORY.md` (project root) | Root causes, ruled-out theories, conventions, change log |
+| `open-items.md` (project root) | Open and deferred items plus pending git actions |
+| `.gitattributes` (project root) | Line endings: `*.md` LF, `*.ps1` CRLF (stops false "modified" files) |
 
 ## Output locations (not in the project folder)
 
