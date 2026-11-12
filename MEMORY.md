@@ -5,6 +5,11 @@ See `CLAUDE.md` for project-specific details.
 
 ## CONFIRMED ROOT CAUSES
 
+- **Files showing as falsely "modified" after a branch switch (confirmed 2026-11-12).** The index
+  stores LF but `core.autocrlf=true` checks files out as CRLF, so any LF edit left the file out of
+  step (`open-items.md` blocked merges with "local changes would be overwritten"; diff against the
+  branch commit was 0 lines). Fixed by `.gitattributes` (`*.md` LF, `*.ps1` CRLF). Do not
+  re-investigate; if it recurs, check `git ls-files --eol` first.
 - **16 KB server-side log buffering explains the gap between "last log activity" and the restart
   (confirmed locally 2026-11-09).** UT99 buffers its log in ~16 KB blocks. The consequences are
   (a) the copy on the server — and therefore every fetch, however timely — stops short of what has
@@ -311,11 +316,21 @@ See `CLAUDE.md` for project-specific details.
   "Access is denied". GOTCHA: `Register-DailyTask.ps1` unregisters the old task *before*
   creating the new one, so a failed elevated step leaves NO task. Register it from an elevated
   pwsh (or via `Start-Process -Verb RunAs`, which triggers a UAC prompt).
+- **Git inside Dropbox:** the project (including `.git`) syncs through Dropbox, which occasionally
+  holds the index briefly, so a commit/merge can fail once with `unable to write .git/index` /
+  `new index file`. Transient — there is no stale `index.lock`; retry the same command. Excluding
+  `.git` from Dropbox sync would remove it.
+- **Branching:** every change, including docs-only, goes on its own branch and is merged to `main`
+  with `--no-ff` on explicit go-ahead; `main` is then pushed to `origin` (GitHub
+  `vtak007/UT99-ServerLog-Analyzer`). Decided 2026-11-12 (user chose branches over direct-to-main).
 
 ## CHANGE LOG
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
 
+- 2026-11-12 — Docs/chore: `.gitattributes` added (`*.md` LF, `*.ps1` CRLF, see CONFIRMED ROOT
+  CAUSES); accepted limitations 8–13 moved from `open-items.md` to `CLAUDE.md` **Known
+  limitations** (numbers kept); `CLAUDE.md` Key files table extended.
 - 2026-11-12 — Docs only (`docs/close-item-2`): **`Register-DailyTask.ps1` verified.** Run from an
   elevated shell, it registered both tasks; live state matched (daily 01:30, retry 30 min x12;
   hourly start moved to :15 with `PT1H`; both `S4U/Highest`; `LastRunTime` reset to never). The
