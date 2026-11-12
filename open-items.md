@@ -6,10 +6,11 @@
 | ---- | -------------------------------------------------- | ------------------------------------------------ |
 | 1    | Report for a day with 3+ restarts                  | Open — waiting on such a day                     |
 | 3    | Why `/System/server-old.log` goes missing          | Open — closes via item 7                         |
-| 4    | Does it track manual vs NFO restarts               | Open — needs more restarts                       |
+| 4    | Does it track manual vs NFO restarts               | Open — needs your manual-restart times           |
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
 | 8–13 | Known limitations                                  | Accepted, no action                              |
+| 16   | Merge `docs/item-4-note` and push                  | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -24,7 +25,12 @@
    discriminator: every recent archive ends mid-line with an unflushed buffer, and only 1 of ~80
    archives carries a `Log file closed` marker, so there is no variation to correlate against.
    No longer a data-loss risk — the hourly task captures the session either way.
-4. Whether `server-old.log` going missing tracks manual vs NFO-initiated restarts.
+4. Whether `server-old.log` going missing tracks manual vs NFO-initiated restarts. **Needs from you:**
+   a running list of the times you restart the server manually (the logs cannot tell manual from
+   NFO-initiated — both log "No reason logged", item 9). After a few weeks, cross-check that list
+   against the hourly WinSCP XMLs (present/absent at the :15 fetch after each restart) in one pass.
+   Needs several restarts of each kind; "no pattern" is a valid result, and a yes on item 7.1
+   would answer this together with item 3.
 
 ## DECIDE
 
@@ -72,4 +78,4 @@ None.
 
 ## Git Actions Outstanding
 
-None.
+16. Merge `docs/item-4-note` to `main` and push, on your go-ahead.
