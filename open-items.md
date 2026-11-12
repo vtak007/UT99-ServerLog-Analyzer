@@ -10,7 +10,6 @@
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
 | 8–13 | Known limitations                                  | Accepted, no action                              |
-| 16   | Merge `docs/item-4-note` and push                  | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -78,4 +77,4 @@ None.
 
 ## Git Actions Outstanding
 
-16. Merge `docs/item-4-note` to `main` and push, on your go-ahead.
+None.
