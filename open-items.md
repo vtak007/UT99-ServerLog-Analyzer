@@ -9,7 +9,6 @@
 | 4    | Does it track manual vs NFO restarts               | Open — needs your manual-restart times           |
 | 6    | 14-day cleanup of run logs and WinSCP XMLs         | Deferred 2026-11-09                              |
 | 7    | NFO support message (3 questions)                  | Deferred 2026-11-12 — draft ready                |
-| 18   | Merge `docs/session-wrapup` and push               | Ready — waiting on your go-ahead                 |
 
 ## VERIFY
 
@@ -55,4 +54,4 @@ Items 8–13 are known limitations, not open work. They live in `CLAUDE.md` unde
 
 ## Git Actions Outstanding
 
-18. Merge `docs/session-wrapup` to `main` and push, on your go-ahead.
+None.
