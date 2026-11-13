@@ -100,6 +100,10 @@ See `CLAUDE.md` for project-specific details.
   any session with a single player, a single map, or a single signature would have hit it. None
   of the 11 archived reports happened to contain a one-row table, which is why it stayed hidden
   until `Failed to load` rows were filtered out of Recurring Warnings and left exactly one row.
+- 2026-11-12 — Scheduled tasks drifted an hour at DST changes. Cause: on this machine
+  `New-ScheduledTaskTrigger -At` serializes `StartBoundary` as UTC (`...Z`), pinning the task to a
+  fixed UTC offset instead of local time. Fixed in `Register-DailyTask.ps1` (daily and hourly
+  triggers) by overwriting `StartBoundary` with an offset-free local `yyyy-MM-ddTHH:mm:ss` string.
 
 ## RULED-OUT THEORIES
 
@@ -327,6 +331,10 @@ See `CLAUDE.md` for project-specific details.
 ## CHANGE LOG
 
 Newest first. Format: `- YYYY-MM-DD — what changed`.
+
+- 2026-11-12 — `Register-DailyTask.ps1` registers local-time triggers (daily and hourly; no UTC pin),
+  so the tasks no longer shift an hour at DST changes (`fix/trigger-local-time`). Live tasks patched
+  to match.
 
 - 2026-11-12 — Docs/chore: `.gitattributes` added (`*.md` LF, `*.ps1` CRLF, see CONFIRMED ROOT
   CAUSES); accepted limitations 8–13 moved from `open-items.md` to `CLAUDE.md` **Known

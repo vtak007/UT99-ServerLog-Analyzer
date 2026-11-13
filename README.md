@@ -169,6 +169,8 @@ are shared.)
 .\Register-DailyTask.ps1 -Unregister
 ```
 
+Both tasks use **local-time** triggers (not pinned to UTC), so they do not shift an hour at daylight-saving changes.
+
 Two tasks do the work:
 
 | Task | When | What |
