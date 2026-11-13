@@ -113,6 +113,9 @@ $startDT   = if ($StartDate) {
     [datetime]::ParseExact($Time, 'HH:mm', $null)
 }
 $trigger   = New-ScheduledTaskTrigger -Daily -At $startDT
+# New-ScheduledTaskTrigger serializes -At as UTC ("...Z"), pinning the task to a fixed UTC time
+# that drifts an hour at every DST change. Overwrite with an offset-free local time.
+$trigger.StartBoundary = $startDT.ToString('yyyy-MM-ddTHH:mm:ss')
 # Restart-on-failure gives the "retry every 30 min until it downloads" behavior:
 # the main script exits non-zero when the remote log is missing (server not yet
 # booted) OR the server is unreachable (no network), which triggers the restart.
@@ -167,6 +170,7 @@ if (-not $NoHourly) {
     # A -Once trigger with a repetition interval and no duration repeats indefinitely.
     $hourlyStart   = (Get-Date -Minute $HourlyMinute -Second 0 -Millisecond 0)
     $hourlyTrigger = New-ScheduledTaskTrigger -Once -At $hourlyStart -RepetitionInterval (New-TimeSpan -Hours 1)
+    $hourlyTrigger.StartBoundary = $hourlyStart.ToString('yyyy-MM-ddTHH:mm:ss')   # local time, not UTC (see daily trigger)
 
     # No restart-on-failure: the next hour's run is the retry. Shorter time limit than the
     # daily task because there is no API call to wait on.
